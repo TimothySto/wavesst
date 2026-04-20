@@ -77,3 +77,42 @@ def test_morlet_w0_parameter():
         result = morlet_freq_response(omega, scale=1.0, w0=w0)
         peak_omega = omega[np.argmax(result)]
         assert abs(peak_omega - w0) < 0.1, f"Expected peak at {w0}, got {peak_omega}"
+
+
+def test_deriv_morlet_import():
+    from wavesst._core.filters import deriv_morlet_freq_response
+    assert callable(deriv_morlet_freq_response)
+
+
+def test_deriv_morlet_shape():
+    from wavesst._core.filters import deriv_morlet_freq_response
+    omega = np.linspace(0, 20.0, 512)
+    re, im = deriv_morlet_freq_response(omega, scale=1.0)
+    assert re.shape == (512,)
+    assert im.shape == (512,)
+
+
+def test_deriv_morlet_zero_real_part():
+    """iω·ψ̂(aω) — real part of iω is zero, so Re[iω·ψ̂] = 0 (ψ̂ is real)."""
+    from wavesst._core.filters import deriv_morlet_freq_response
+    omega = np.linspace(0, 20.0, 512)
+    re, im = deriv_morlet_freq_response(omega, scale=1.0)
+    np.testing.assert_array_equal(re, 0.0)
+
+
+def test_deriv_morlet_imaginary_sign():
+    """Im[iω·ψ̂(aω)] = ω·ψ̂(aω) ≥ 0 for ω ≥ 0."""
+    from wavesst._core.filters import deriv_morlet_freq_response
+    omega = np.linspace(0, 20.0, 512)
+    re, im = deriv_morlet_freq_response(omega, scale=1.0)
+    assert np.all(im >= 0.0)
+
+
+def test_deriv_morlet_imaginary_value():
+    """Im[iω·ψ̂(aω)] should equal ω * morlet_freq_response(ω, a)."""
+    from wavesst._core.filters import morlet_freq_response, deriv_morlet_freq_response
+    omega = np.linspace(0.0, 20.0, 512)
+    scale = 1.5
+    psi_hat = morlet_freq_response(omega, scale=scale)
+    _, im = deriv_morlet_freq_response(omega, scale=scale)
+    np.testing.assert_allclose(im, omega * psi_hat, atol=1e-14)
