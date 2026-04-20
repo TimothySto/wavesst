@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68", "Cython>=3.0", "numpy>=1.24"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "wavesst"
