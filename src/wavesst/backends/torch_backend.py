@@ -34,7 +34,8 @@ class TorchBackend(ArrayBackend):
 
     def to_numpy(self, x) -> np.ndarray:
         if isinstance(x, torch.Tensor):
-            return x.detach().cpu().numpy()
+            # resolve_conj() materialises a lazy conjugate bit set by torch.conj()
+            return x.resolve_conj().detach().cpu().numpy()
         return np.asarray(x)
 
     def device(self) -> str:
