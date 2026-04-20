@@ -83,21 +83,21 @@ def cwt(
 
     n_scales = len(scale_arr)
 
-    # Angular frequency axis for rfft output
-    omega = np.fft.rfftfreq(N, d=1.0 / fs) * (2.0 * math.pi)  # rad/s, length N//2+1
+    # Full angular frequency axis (rad/s) — analytic filter is zero for omega<=0,
+    # so ifft of the one-sided product gives the complex analytic CWT.
+    omega = np.fft.fftfreq(N, d=1.0 / fs) * (2.0 * math.pi)  # rad/s, length N
 
     # Forward FFT of signal (once)
-    X_hat = np.fft.rfft(x)  # complex, length N//2+1
+    X_hat = np.fft.fft(x)  # complex, length N
 
     # Allocate output
     W = np.empty((n_scales, N), dtype=np.complex128)
 
     for i, a in enumerate(scale_arr):
-        psi_hat = morlet_freq_response(omega, scale=a)     # real, (N//2+1,)
-        # Multiply: X_hat * sqrt(a) * conj(psi_hat)
-        # psi_hat is real so conj is identity; sqrt(a) normalises energy across scales
-        product = X_hat * (math.sqrt(a) * psi_hat)
-        W[i] = np.fft.irfft(product, n=N)
+        psi_hat = morlet_freq_response(omega, scale=a)     # real, (N,); zero for omega<=0
+        # Multiply: X_hat * sqrt(a) * psi_hat  (psi_hat real, conj = identity)
+        # sqrt(a) normalises energy across scales
+        W[i] = np.fft.ifft(X_hat * (math.sqrt(a) * psi_hat))
 
     freqs = _scales_to_freqs(scale_arr)
     times = np.arange(N, dtype=np.float64) / fs
