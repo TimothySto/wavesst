@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.pyd
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.c
+*.html
+*.annotate
+.pytest_cache/
+.hypothesis/
+notebooks/.ipynb_checkpoints/
