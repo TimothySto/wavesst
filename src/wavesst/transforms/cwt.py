@@ -28,8 +28,9 @@ def _auto_scales(N: int, fs: float, nv: int = 32) -> np.ndarray:
     return s0 * (2.0 ** (j / nv))
 
 
-def _scales_to_freqs(scales: np.ndarray, fs: float, w0: float = MORLET_W0) -> np.ndarray:
-    return (w0 / (2.0 * math.pi)) * fs / scales
+def _scales_to_freqs(scales: np.ndarray, w0: float = MORLET_W0) -> np.ndarray:
+    # scales in seconds, omega in rad/s: peak at a*omega=w0 → f = w0/(2π·a)
+    return w0 / (2.0 * math.pi * scales)
 
 
 def cwt(
@@ -98,7 +99,7 @@ def cwt(
         product = X_hat * (math.sqrt(a) * psi_hat)
         W[i] = np.fft.irfft(product, n=N)
 
-    freqs = _scales_to_freqs(scale_arr, fs)
+    freqs = _scales_to_freqs(scale_arr)
     times = np.arange(N, dtype=np.float64) / fs
 
     return CWTResult(W=W, scales=scale_arr, freqs=freqs, times=times)

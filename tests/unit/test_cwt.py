@@ -68,7 +68,7 @@ def test_cwt_scales_log_spaced(signal_256, backend):
 
 
 def test_cwt_freqs_inversely_proportional_to_scales(signal_256, backend):
-    """freqs = w0 / (2*pi * scale) * fs — so freqs * scales should be constant."""
+    """freqs = w0 / (2*pi * scale) — so freqs * scales should be constant."""
     result = cwt(signal_256, wavelet="morlet", scales="auto", fs=1.0, backend=backend)
     products = result.freqs * result.scales
     np.testing.assert_allclose(products, products[0], rtol=1e-6)
@@ -86,9 +86,14 @@ def test_cwt_explicit_scale_array(signal_256, backend):
     np.testing.assert_array_equal(result.scales, scales)
 
 
-def test_cwt_fs_scales_freqs(signal_256, backend):
-    """With fixed scale array, doubling fs doubles all freqs."""
-    fixed_scales = np.array([1.0, 2.0, 4.0, 8.0])
-    r1 = cwt(signal_256, wavelet="morlet", scales=fixed_scales, fs=1.0, backend=backend)
-    r2 = cwt(signal_256, wavelet="morlet", scales=fixed_scales, fs=2.0, backend=backend)
-    np.testing.assert_allclose(r2.freqs, r1.freqs * 2.0, rtol=1e-6)
+def test_cwt_auto_highest_freq_near_nyquist(signal_256, backend):
+    """With auto scales, the highest resolved freq should be near fs/2."""
+    fs = 256.0
+    x = np.random.default_rng(7).standard_normal(256)
+    result = cwt(x, wavelet="morlet", scales="auto", fs=fs, backend=backend)
+    nyquist = fs / 2.0
+    highest_freq = result.freqs.max()
+    # Should be within 10% of Nyquist
+    assert abs(highest_freq - nyquist) / nyquist < 0.1, (
+        f"Highest freq {highest_freq:.1f} should be near Nyquist {nyquist:.1f}"
+    )
