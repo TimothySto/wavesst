@@ -4,6 +4,7 @@ from wavesst.transforms.cwt import cwt, CWTResult
 from wavesst.transforms.sst import sst, SSTResult
 from wavesst.transforms.stft import stft, STFTResult
 from wavesst.transforms.stft_sst import stft_sst, STFTSSTResult
+from wavesst.transforms.msst import msst, MSSTResult
 from wavesst.analysis.ridge import extract_ridges, Ridge
 from wavesst.analysis.reconstruction import reconstruct, Component
 
@@ -14,6 +15,7 @@ __all__ = [
     "sst", "SSTResult",
     "stft", "STFTResult",
     "stft_sst", "STFTSSTResult",
+    "msst", "MSSTResult",
     "extract_ridges", "Ridge",
     "reconstruct", "Component",
 ]
