@@ -54,7 +54,8 @@ def reconstruct(
     -------
     list of Component, same length as ridges
     """
-    Tx = sst_result.Tx              # (n_freqs, n_samples) complex
+    # Tx is a torch.Tensor on CPU — convert once to numpy for reconstruction math
+    Tx = sst_result.Tx.numpy()      # (n_freqs, n_samples) complex
     freqs = sst_result.freqs        # (n_freqs,) Hz, uniform ascending
     df = freqs[1] - freqs[0]
     n_freqs, n_samples = Tx.shape

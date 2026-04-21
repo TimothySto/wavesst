@@ -33,7 +33,7 @@ def extract_ridges(
     -------
     list of Ridge, length n, ordered by decreasing energy
     """
-    energy = np.abs(sst_result.Tx).astype(np.float64)  # (n_freqs, n_samples)
+    energy = sst_result.Tx.abs().double().numpy()  # (n_freqs, n_samples)
     freqs = sst_result.freqs                             # (n_freqs,)
     residual = energy.copy()
     ridges: list[Ridge] = []

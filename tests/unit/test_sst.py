@@ -1,15 +1,13 @@
 import numpy as np
 import pytest
+import torch
 from wavesst.transforms.sst import sst, SSTResult
-from wavesst.backends import get_backend
 
 FS = 256.0
 N = 512
 
 
-@pytest.fixture
-def backend():
-    return get_backend("numpy")
+# cfg fixture provided by conftest.py
 
 
 @pytest.fixture
@@ -18,76 +16,81 @@ def signal():
     return rng.standard_normal(N).astype(np.float64)
 
 
-def test_sst_returns_sst_result(signal, backend):
-    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, backend=backend)
+def test_sst_returns_sst_result(signal, cfg):
+    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, cfg=cfg)
     assert isinstance(result, SSTResult)
 
 
-def test_sst_tx_shape(signal, backend):
-    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, backend=backend)
+def test_sst_tx_shape(signal, cfg):
+    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, cfg=cfg)
     n_freqs, n_samples = result.Tx.shape
     assert n_samples == N
     assert n_freqs > 0
 
 
-def test_sst_tx_is_complex(signal, backend):
-    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, backend=backend)
-    assert np.iscomplexobj(result.Tx)
+def test_sst_tx_is_tensor(signal, cfg):
+    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, cfg=cfg)
+    assert isinstance(result.Tx, torch.Tensor)
 
 
-def test_sst_freqs_length(signal, backend):
-    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, backend=backend)
+def test_sst_tx_is_complex(signal, cfg):
+    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, cfg=cfg)
+    assert result.Tx.is_complex()
+
+
+def test_sst_freqs_length(signal, cfg):
+    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, cfg=cfg)
     assert len(result.freqs) == result.Tx.shape[0]
 
 
-def test_sst_freqs_uniformly_spaced(signal, backend):
+def test_sst_freqs_uniformly_spaced(signal, cfg):
     """SST output frequency grid must be uniform (unlike CWT scale grid)."""
-    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, backend=backend)
+    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, cfg=cfg)
     diffs = np.diff(result.freqs)
     np.testing.assert_allclose(diffs, diffs[0], rtol=1e-6)
 
 
-def test_sst_times_length(signal, backend):
-    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, backend=backend)
+def test_sst_times_length(signal, cfg):
+    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, cfg=cfg)
     assert len(result.times) == N
 
 
-def test_sst_wx_is_cwt_result(signal, backend):
+def test_sst_wx_is_cwt_result(signal, cfg):
     from wavesst.transforms.cwt import CWTResult
-    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, backend=backend)
+    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, cfg=cfg)
     assert isinstance(result.Wx, CWTResult)
 
 
-def test_sst_gamma_none_no_thresholding(signal, backend):
+def test_sst_gamma_none_no_thresholding(signal, cfg):
     """With gamma=None, all CWT coefficients participate — Tx should be non-zero."""
-    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, gamma=None, backend=backend)
-    assert np.any(np.abs(result.Tx) > 0)
+    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, gamma=None, cfg=cfg)
+    assert result.Tx.abs().gt(0).any().item()
 
 
-def test_sst_gamma_auto(signal, backend):
-    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, gamma="auto", backend=backend)
+def test_sst_gamma_auto(signal, cfg):
+    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, gamma="auto", cfg=cfg)
     assert isinstance(result, SSTResult)
 
 
-def test_sst_gamma_float(signal, backend):
-    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, gamma=0.01, backend=backend)
+def test_sst_gamma_float(signal, cfg):
+    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, gamma=0.01, cfg=cfg)
     assert isinstance(result, SSTResult)
 
 
-def test_sst_gamma_callable(signal, backend):
+def test_sst_gamma_callable(signal, cfg):
     result = sst(signal, wavelet="morlet", scales="auto", fs=FS,
-                 gamma=lambda Wx: 0.05, backend=backend)
+                 gamma=lambda Wx: 0.05, cfg=cfg)
     assert isinstance(result, SSTResult)
 
 
-def test_sst_gamma_universal(signal, backend):
+def test_sst_gamma_universal(signal, cfg):
     result = sst(signal, wavelet="morlet", scales="auto", fs=FS,
-                 gamma="universal", backend=backend)
+                 gamma="universal", cfg=cfg)
     assert isinstance(result, SSTResult)
 
 
-def test_sst_high_gamma_produces_sparse_tx(signal, backend):
+def test_sst_high_gamma_produces_sparse_tx(signal, cfg):
     """Very high threshold → most bins zero."""
-    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, gamma=1e10, backend=backend)
-    nonzero_frac = np.count_nonzero(np.abs(result.Tx) > 0) / result.Tx.size
+    result = sst(signal, wavelet="morlet", scales="auto", fs=FS, gamma=1e10, cfg=cfg)
+    nonzero_frac = result.Tx.abs().gt(0).float().mean().item()
     assert nonzero_frac < 0.01
