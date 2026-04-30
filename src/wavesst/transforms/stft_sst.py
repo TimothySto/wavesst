@@ -31,7 +31,7 @@ def stft_sst(
     """
     STFT-based Synchrosqueezing Transform.
 
-    IF estimator: ω̂(η,τ) = η - Im(∂_τV_x / V_x) / (2π)
+    IF estimator: ω̂(η,τ) = η + Im(∂_τV_x / V_x) / (2π)
 
     ∂_τV_x is computed via central finite difference on adjacent frames
     (forward/backward at signal boundaries). Reassignment onto the STFT's
@@ -89,7 +89,7 @@ def stft_sst(
     # --- IF estimator ω̂(η,τ) = η - Im(∂_τV / V) / (2π) ---
     V_safe = torch.where(mask, V, torch.ones(1, dtype=V.dtype, device=device))
     eta = vx.freqs                                                     # (n_freqs,) Hz
-    omega_hat = eta[:, None] - (dV / V_safe).imag / (2.0 * math.pi)  # (n_freqs, n_frames) Hz
+    omega_hat = eta[:, None] + (dV / V_safe).imag / (2.0 * math.pi)  # (n_freqs, n_frames) Hz
 
     # --- Vectorised scatter onto same uniform freq grid ---
     f_min = float(eta[0])

@@ -12,3 +12,8 @@ build/
 .pytest_cache/
 .hypothesis/
 notebooks/.ipynb_checkpoints/
+.vscode/
+docs/superpowers/
+.claude/
+ReferenceDocs/
+mempalace.yaml

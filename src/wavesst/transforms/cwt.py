@@ -71,7 +71,7 @@ def cwt(
     """
     Continuous Wavelet Transform via batched FFT (torch-native).
 
-    W_x(a, b) = IFFT[ X_hat(ω) · √a · ψ̂*(a·ω) ]
+    W_x(a, b) = IFFT[ X_hat(ω) · ψ̂*(a·ω) ]
 
     Uses full-spectrum fft/ifft (NOT rfft) so W is the complex analytic CWT.
     The Morlet wavelet is analytic (ψ̂(ω)=0 for ω≤0), so the complex-valued
@@ -147,11 +147,10 @@ def cwt(
     for start in range(0, n_scales, chunk_size):
         end = min(start + chunk_size, n_scales)
         scales_chunk = scales_dev[start:end]          # (chunk,)
-        sqrt_a = scales_chunk[:, None] ** 0.5         # (chunk, 1)
 
         psi_hat = _morlet_filter_bank(omega, scales_chunk, MORLET_W0, real_dtype)
         # product shape: (chunk, N) complex
-        product = X_hat[None, :] * (sqrt_a * psi_hat)
+        product = X_hat[None, :] * psi_hat
         W_chunk = torch.fft.ifft(product, dim=-1)     # (chunk, N) complex
 
         # Offload to CPU RAM, cast to target complex dtype

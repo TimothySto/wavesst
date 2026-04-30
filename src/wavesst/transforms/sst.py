@@ -60,7 +60,7 @@ def sst(
     CWT-based Synchrosqueezing Transform (torch-native).
 
     IF estimator:  ω̂(a,b) = Re[ -i · (∂_b W_x) / W_x ]
-    Reassignment:  T_x(f,b) += W_x(a,b)/a  where round(ω̂/2π) == f bin
+    Reassignment:  T_x(f,b) += W_x(a,b)·(log2/nv)  where round(ω̂/2π) == f bin
 
     Uses vectorised scatter_add_ (real+imag split) — no Python loop over time.
     W streams from CPU RAM back to device in chunks; Tx accumulates on device.
@@ -132,7 +132,6 @@ def sst(
         end = min(start + chunk_size, n_scales)
         chunk = end - start
         scales_chunk = scales_dev[start:end]      # (chunk,)
-        sqrt_a = scales_chunk[:, None] ** 0.5     # (chunk, 1)
 
         # Load W_chunk from CPU RAM onto device
         W_chunk = wx.W[start:end].to(device=device, dtype=cfg.dtype)  # (chunk, N)
@@ -144,9 +143,9 @@ def sst(
             omega[None, :] * psi_hat,
         )  # (chunk, N) complex
 
-        # dW = IFFT[ X_hat · √a · i·ω·ψ̂(aω) ]
+        # dW = IFFT[ X_hat · i·ω·ψ̂(aω) ]
         dW_chunk = torch.fft.ifft(
-            X_hat[None, :] * (sqrt_a * deriv_psi), dim=-1
+            X_hat[None, :] * deriv_psi, dim=-1
         )  # (chunk, N) complex
 
         # IF estimator: ω̂ = Re(-i · dW / W)
@@ -164,7 +163,8 @@ def sst(
         k = torch.round((f_hat - f_min) / df).long()      # (chunk, N) int64
         valid = mask_chunk & (k >= 0) & (k < n_freqs)     # (chunk, N) bool
 
-        weights = W_chunk / scales_chunk[:, None]          # (chunk, N) complex
+        da_ratio = float(math.log(scale_arr[1] / scale_arr[0]))  # = log(2)/nv
+        weights = W_chunk * da_ratio                       # (chunk, N) complex
 
         # Expand time indices and flatten valid entries
         b_exp = b_indices.unsqueeze(0).expand(chunk, N)   # (chunk, N)

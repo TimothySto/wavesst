@@ -15,7 +15,7 @@ def _admissibility_constant(w0: float = 6.0, n_pts: int = 100_000) -> float:
     omega = np.linspace(1e-6, 30.0, n_pts)
     dw = omega[1] - omega[0]
     psi_hat = morlet_freq_response(omega, scale=1.0, w0=w0)
-    return float(np.sum(psi_hat ** 2 / omega) * dw)
+    return float(np.sum(psi_hat / omega) * dw)
 
 
 _C_PSI = _admissibility_constant()   # computed once at import time
@@ -74,7 +74,7 @@ def reconstruct(
             f_lo = f_ridge - bandwidth
             f_hi = f_ridge + bandwidth
             mask = (freqs >= f_lo) & (freqs <= f_hi)
-            analytic[t] = np.sum(Tx[mask, t]) * df
+            analytic[t] = np.sum(Tx[mask, t])
 
         # Apply inverse normalization: (2/C_psi)
         analytic *= (2.0 / _C_PSI)

@@ -110,7 +110,6 @@ def msst(
             end = min(start + chunk_size, n_scales)
             chunk = end - start
             scales_chunk = scales_dev[start:end]
-            sqrt_a = scales_chunk[:, None] ** 0.5
 
             W_chunk = wx.W[start:end].to(device=device, dtype=cfg.dtype)
 
@@ -120,7 +119,7 @@ def msst(
                 omega[None, :] * psi_hat,
             )
             dW_chunk = torch.fft.ifft(
-                X_hat[None, :] * (sqrt_a * deriv_psi), dim=-1
+                X_hat[None, :] * deriv_psi, dim=-1
             )
 
             W_abs_chunk = W_chunk.abs()
@@ -134,7 +133,8 @@ def msst(
             f_hat = omega_hat / (2.0 * math.pi)
             k = torch.round((f_hat - f_min) / df).long()
             valid = mask_chunk & (k >= 0) & (k < n_freqs)
-            weights = W_chunk / scales_chunk[:, None]
+            da_ratio = float(math.log(scale_arr[1] / scale_arr[0]))
+            weights = W_chunk * da_ratio
             b_exp = b_indices.unsqueeze(0).expand(chunk, N)
             k_flat = k[valid]
             b_flat = b_exp[valid]
