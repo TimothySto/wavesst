@@ -11,7 +11,7 @@ from wavesst._core.filters import morlet_freq_response
 
 
 def _admissibility_constant(w0: float = 6.0, n_pts: int = 100_000) -> float:
-    """Numerically compute C_psi = integral_0^inf |psi_hat(omega)|^2 / omega d_omega."""
+    """Numerically compute Css = integral_0^inf psi_hat(omega) / omega d_omega."""
     omega = np.linspace(1e-6, 30.0, n_pts)
     dw = omega[1] - omega[0]
     psi_hat = morlet_freq_response(omega, scale=1.0, w0=w0)
@@ -29,70 +29,196 @@ class Component:
     ridge: Ridge            # the ridge this component was extracted along
 
 
-def reconstruct(
+def _reconstruct_cwt_sst(
     sst_result: SSTResult,
     ridges: list[Ridge],
-    bandwidth: float | None = None,
+    bandwidth: float | None,
 ) -> list[Component]:
     """
-    Reconstruct time-domain components from SST output.
+    Inverse CWT-SST formula:
+      x_k(t) = (2 / Css) * Re[ sum_{f in band_k(t)} T_x(f, t) ]
 
-    Inverse SST formula:
-      x_k(t) ~= (2 / C_psi) * Re[ sum_{f in band_k(t)} T_x(f, t) * df ]
-
-    We integrate T_x within a frequency band of width `bandwidth` around each
-    ridge's instantaneous frequency path, then apply the inverse normalization.
-
-    Parameters
-    ----------
-    sst_result : SSTResult
-    ridges     : list of Ridge from extract_ridges()
-    bandwidth  : Hz half-width of integration band around each ridge.
-                 Defaults to df * 3 (plus/minus 3 frequency bins).
-
-    Returns
-    -------
-    list of Component, same length as ridges
+    No df factor — the log-scale weight log(2)/nv is already absorbed into T_x.
     """
-    # Tx is a torch.Tensor on CPU — convert once to numpy for reconstruction math
-    Tx = sst_result.Tx.numpy()      # (n_freqs, n_samples) complex
+    import torch
+    Tx = sst_result.Tx
+    if isinstance(Tx, torch.Tensor):
+        Tx = Tx.cpu().numpy()
     freqs = sst_result.freqs        # (n_freqs,) Hz, uniform ascending
     df = freqs[1] - freqs[0]
     n_freqs, n_samples = Tx.shape
 
     if bandwidth is None:
-        bandwidth = df * 3.0        # +/-3 bins around ridge
+        bandwidth = df * 3.0        # ±3 bins around ridge
 
     components: list[Component] = []
 
     for ridge in ridges:
-        # Integrate Tx within band around ridge path
         analytic = np.zeros(n_samples, dtype=np.complex128)
 
         for t in range(n_samples):
             f_ridge = ridge.freq_path[t]
-            f_lo = f_ridge - bandwidth
-            f_hi = f_ridge + bandwidth
-            mask = (freqs >= f_lo) & (freqs <= f_hi)
+            mask = (freqs >= f_ridge - bandwidth) & (freqs <= f_ridge + bandwidth)
             analytic[t] = np.sum(Tx[mask, t])
 
-        # Apply inverse normalization: (2/C_psi)
         analytic *= (2.0 / _C_PSI)
 
-        # Real part -> reconstructed signal
-        signal = np.real(analytic)
-
-        # Amplitude envelope = |analytic signal|
-        amplitude = np.abs(analytic)
-
-        # Instantaneous phase = angle of analytic signal
-        phase = np.angle(analytic)
-
         components.append(Component(
-            signal=signal,
-            amplitude=amplitude,
-            phase=phase,
+            signal=np.real(analytic),
+            amplitude=np.abs(analytic),
+            phase=np.angle(analytic),
             ridge=ridge,
         ))
 
     return components
+
+
+def _reconstruct_stft_sst(
+    sst_result,
+    ridges: list[Ridge],
+    bandwidth: float | None,
+    fs: float,
+) -> list[Component]:
+    """
+    Inverse STFT-SST via overlap-add (OLA) synthesis at the ridge frequency.
+
+    Background
+    ----------
+    Summing T_x(η,τ) over a frequency band gives ~0 for a pure tone because the
+    Hann window's leakage at adjacent bins exactly cancels the main lobe
+    (Poisson-sum cancellation).  The correct reconstruction uses V — the
+    original STFT output — at the ridge frequency, synthesised via OLA:
+
+        x_k[n] = (4/M) · Re[Σ_m V[k_m, m] · e^{i2πk_m·n/M} · g[n-n_m]]
+                 ──────────────────────────────────────────────────────────
+                        Σ_m g[n-n_m]
+
+    Derivation of the (4/M) prefactor
+    ----------------------------------
+    For a pure tone A·cos(2πf₀t) exactly on bin k₀:
+      V[k₀, m] = A/2 · G₀ · e^{iφ_m}   where G₀ = Σg[n], φ_m = 2πk₀·n_m/M
+    Substituting into the OLA sum:
+      Σ_m (4/M)·Re[V·e^{i2πk₀n/M}·g] = Σ_m (4/M)·(A/2·G₀)·cos(2πf₀t)·g[n-n_m]
+                                       = (2A·G₀/M)·cos(2πf₀t)·Σ_m g[n-n_m]
+    Dividing by norm = Σ_m g[n-n_m]:
+      x_k[n] = (2·G₀/M)·A·cos(2πf₀t) = A·cos(2πf₀t)   [since G₀ = M/2 for Hann]
+
+    Parameters
+    ----------
+    sst_result : STFTSSTResult
+    ridges     : list of Ridge (freq_path at frame times, n_frames points)
+    bandwidth  : unused (kept for API compatibility)
+    fs         : sample rate in Hz
+    """
+    import torch
+
+    # Use the original STFT output V (NOT T_x) to avoid Poisson-sum cancellation
+    V = sst_result.Vx.V
+    if isinstance(V, torch.Tensor):
+        V = V.cpu().numpy()             # (n_freqs, n_frames) complex
+
+    freqs = sst_result.freqs
+    if isinstance(freqs, torch.Tensor):
+        freqs = freqs.cpu().numpy()     # (n_freqs,) Hz
+
+    win = sst_result.Vx.window
+    if isinstance(win, torch.Tensor):
+        win = win.cpu().numpy().astype(np.float64)   # (nperseg,)
+
+    hop = int(sst_result.Vx.hop)
+    nperseg = len(win)
+    n_freqs, n_frames = V.shape
+    N = sst_result.n_samples
+
+    components: list[Component] = []
+
+    for ridge in ridges:
+        x_k   = np.zeros(N, dtype=np.float64)
+        norm  = np.zeros(N, dtype=np.float64)
+
+        for m in range(n_frames):
+            # Closest STFT bin to the ridge frequency at this frame
+            k_m = int(np.argmin(np.abs(freqs - ridge.freq_path[m])))
+
+            n_start = m * hop
+            n_end   = min(n_start + nperseg, N)
+            length  = n_end - n_start
+            local_n = np.arange(length, dtype=np.float64)
+
+            # Global-phase reconstruction: e^{i2πk_m·n/M} where n is absolute
+            phase = 2.0 * np.pi * k_m * (n_start + local_n) / nperseg
+            contrib = (4.0 / nperseg) * np.real(
+                complex(V[k_m, m]) * np.exp(1j * phase)
+            ) * win[:length]
+
+            x_k[n_start:n_end]  += contrib
+            norm[n_start:n_end] += win[:length]
+
+        norm = np.maximum(norm, 1e-8)
+        x_k /= norm
+
+        # Analytic envelope from V at ridge bins (interpolated to sample times)
+        frame_times = sst_result.times
+        if isinstance(frame_times, torch.Tensor):
+            frame_times = frame_times.cpu().numpy()
+        sample_times = np.arange(N) / fs
+
+        v_ridge = np.array([V[int(np.argmin(np.abs(freqs - ridge.freq_path[m]))), m]
+                             for m in range(n_frames)], dtype=np.complex128)
+        # Normalise: V[k,m] ≈ A/2·G₀ → analytic amplitude = A
+        G0 = float(win.sum())
+        v_ridge_norm = v_ridge * (2.0 / G0)    # → magnitude A
+
+        v_real = np.interp(sample_times, frame_times, v_ridge_norm.real)
+        v_imag = np.interp(sample_times, frame_times, v_ridge_norm.imag)
+        analytic = v_real + 1j * v_imag
+
+        components.append(Component(
+            signal=x_k,
+            amplitude=np.abs(analytic),
+            phase=np.angle(analytic),
+            ridge=ridge,
+        ))
+
+    return components
+
+
+def reconstruct(
+    sst_result,
+    ridges: list[Ridge],
+    bandwidth: float | None = None,
+    fs: float = 1.0,
+) -> list[Component]:
+    """
+    Reconstruct time-domain components from SST output.
+
+    Accepts either a SSTResult (CWT-based SST) or a STFTSSTResult (STFT-based SST).
+
+    CWT-SST inverse formula:
+      x_k(t) = (2 / Css) · Re[ Σ_{f ∈ band_k(t)} T_x(f, t) ]
+      where Css = ∫ ψ̂(ω)/ω dω  (SST admissibility constant ≈ 0.323)
+
+    STFT-SST inverse formula:
+      z_k[m] = Σ_{f ∈ band_k} T_x(f, m)      ← at each STFT frame m
+      x_k(t) = (2/G₀) · Re[ interp(z_k)(t) ]  ← interpolated to all samples
+      where G₀ = Σ g[n]  (window DC value)
+
+    Parameters
+    ----------
+    sst_result : SSTResult or STFTSSTResult
+    ridges     : list of Ridge from extract_ridges()
+    bandwidth  : Hz half-width of integration band (default: df × 3)
+    fs         : sample rate in Hz — required for STFT-SST to build the
+                 sample time axis; ignored for CWT-SST.
+
+    Returns
+    -------
+    list of Component, same length as ridges
+    """
+    # Import here to avoid circular dependency at module load time
+    from wavesst.transforms.stft_sst import STFTSSTResult
+
+    if isinstance(sst_result, STFTSSTResult):
+        return _reconstruct_stft_sst(sst_result, ridges, bandwidth, fs)
+    else:
+        return _reconstruct_cwt_sst(sst_result, ridges, bandwidth)

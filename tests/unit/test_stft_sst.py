@@ -62,3 +62,31 @@ def test_stft_sst_peak_near_tone_freq(tone, stft_sst_cfg):
     energy = result.Tx.abs().pow(2).sum(dim=1)
     peak_freq = result.freqs[energy.argmax()].item()
     assert abs(peak_freq - 32.0) / 32.0 < 0.10
+
+
+def test_stft_sst_n_samples_stored(tone, stft_sst_cfg):
+    result = stft_sst(tone, fs=FS, nperseg=256, cfg=stft_sst_cfg)
+    assert result.n_samples == N
+
+
+def test_stft_sst_reconstruct_amplitude(stft_sst_cfg):
+    """Reconstruct a pure tone from STFT-SST; amplitude should be within 10%."""
+    f0, A = 32.0, 1.0
+    t = np.arange(N) / FS
+    x = A * np.cos(2 * np.pi * f0 * t).astype(np.float32)
+
+    result = stft_sst(x, fs=FS, nperseg=128, noverlap=120, gamma="auto",
+                      cfg=stft_sst_cfg)
+    ridges = wavesst.extract_ridges(result, n=1, penalty=1.0)
+    comps  = wavesst.reconstruct(result, ridges, fs=FS)
+
+    sig = comps[0].signal
+    mid = slice(N // 4, 3 * N // 4)
+    rms_got      = np.sqrt(np.mean(sig[mid] ** 2))
+    rms_expected = A / np.sqrt(2)
+    error_factor = rms_got / rms_expected
+
+    assert abs(error_factor - 1.0) < 0.10, (
+        f"STFT-SST reconstruction amplitude factor = {error_factor:.3f} "
+        f"(expected 1.00 ± 0.10)"
+    )

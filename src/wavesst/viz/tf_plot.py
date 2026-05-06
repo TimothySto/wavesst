@@ -115,9 +115,12 @@ def plot_components(components, times, ax=None, **kwargs):
         _, ax = plt.subplots()
 
     times_arr = np.asarray(times)
+    labels = kwargs.pop("label", None)   # remove label once before the loop
     for i, comp in enumerate(components):
-        label = kwargs.pop("label", f"Component {i + 1}")
-        ax.plot(times_arr, comp.signal, label=label, **kwargs)
+        lbl = labels[i] if isinstance(labels, (list, tuple)) else (
+            labels if labels is not None else f"Component {i + 1}"
+        )
+        ax.plot(times_arr, comp.signal, label=lbl, **kwargs)
 
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Amplitude")
