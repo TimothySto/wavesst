@@ -201,7 +201,7 @@ def reconstruct(
     STFT-SST inverse formula (overlap-add on V):
       For each frame m, collect V[k_m, m] at the ridge bin k_m.
       OLA synthesis: x_k[n] = (4/M) · Re[ Σ_m V[k_m,m] · e^{i2πk_m·n/M}
-                                           · g[n−n_m] ] / Σ_m g²[n−n_m]
+                                           · g[n−n_m] ] / Σ_m g[n−n_m]
       where M = nperseg. Uses V (raw STFT), not T_x, to avoid Poisson-sum
       cancellation from Hann-window leakage.
 
