@@ -106,3 +106,23 @@ def test_component_ridge_attached(cfg):
     _, sst_result, ridges = _make_sst_ridges(32.0, cfg)
     components = reconstruct(sst_result, ridges)
     assert components[0].ridge is ridges[0]
+
+
+def test_reconstruct_msst_result(cfg):
+    """reconstruct() should accept MSSTResult (duck-types through _reconstruct_cwt_sst)."""
+    from wavesst.transforms.msst import msst, MSSTResult
+
+    f0 = 32.0
+    t = np.arange(N) / FS
+    x = np.cos(2 * np.pi * f0 * t).astype(np.float64)
+    msst_result = msst(x, wavelet="morlet", scales="auto", fs=FS,
+                       n_iter=2, gamma="auto", cfg=cfg)
+    assert isinstance(msst_result, MSSTResult)
+
+    ridges = extract_ridges(msst_result, n=1, penalty=1.0)
+    components = reconstruct(msst_result, ridges)
+
+    assert isinstance(components, list)
+    assert len(components) == 1
+    assert isinstance(components[0], Component)
+    assert components[0].signal.shape == (N,)

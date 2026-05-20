@@ -79,3 +79,12 @@ def test_high_penalty_smoother_ridge(cfg):
     assert tv_high <= tv_low + 1, (
         f"Higher penalty should give smoother ridge: tv_low={tv_low}, tv_high={tv_high}"
     )
+
+
+def test_ridge_times_field(cfg):
+    """Ridge.times should match the SST result time axis exactly."""
+    result = _tone_sst(32.0, cfg)
+    ridges = extract_ridges(result, n=1, penalty=1.0)
+    r = ridges[0]
+    assert r.times.shape == (N,)
+    np.testing.assert_allclose(r.times, result.times)

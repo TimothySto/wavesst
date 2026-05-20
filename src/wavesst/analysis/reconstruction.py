@@ -198,10 +198,12 @@ def reconstruct(
       x_k(t) = (2 / Css) · Re[ Σ_{f ∈ band_k(t)} T_x(f, t) ]
       where Css = ∫ ψ̂(ω)/ω dω  (SST admissibility constant ≈ 0.323)
 
-    STFT-SST inverse formula:
-      z_k[m] = Σ_{f ∈ band_k} T_x(f, m)      ← at each STFT frame m
-      x_k(t) = (2/G₀) · Re[ interp(z_k)(t) ]  ← interpolated to all samples
-      where G₀ = Σ g[n]  (window DC value)
+    STFT-SST inverse formula (overlap-add on V):
+      For each frame m, collect V[k_m, m] at the ridge bin k_m.
+      OLA synthesis: x_k[n] = (4/M) · Re[ Σ_m V[k_m,m] · e^{i2πk_m·n/M}
+                                           · g[n−n_m] ] / Σ_m g²[n−n_m]
+      where M = nperseg. Uses V (raw STFT), not T_x, to avoid Poisson-sum
+      cancellation from Hann-window leakage.
 
     Parameters
     ----------
