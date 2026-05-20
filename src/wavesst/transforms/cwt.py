@@ -11,14 +11,18 @@ from wavesst.config import Config, config as _global_config
 MORLET_W0 = 6.0
 _PI_NEG_QUARTER = 0.7511255444649425  # pi^(-1/4)
 
+_SUPPORTED_WAVELETS = ("morlet", "bump", "paul", "dog")
+
 
 @dataclass
 class CWTResult:
-    W: torch.Tensor     # complex, shape (n_scales, n_samples), on CPU
-    scales: np.ndarray  # float64, shape (n_scales,)
-    freqs: np.ndarray   # float64, shape (n_scales,)
-    times: np.ndarray   # float64, shape (n_samples,)
+    W: torch.Tensor          # complex, shape (n_scales, n_samples), on CPU
+    scales: np.ndarray       # float64, shape (n_scales,)
+    freqs: np.ndarray        # float64, shape (n_scales,)
+    times: np.ndarray        # float64, shape (n_samples,)
     cfg: Config = field(default_factory=Config, repr=False)
+    wavelet: str = "morlet"
+    wavelet_order: int | None = None
 
 
 def _auto_scales(N: int, fs: float, nv: int = 32) -> np.ndarray:
@@ -30,24 +34,37 @@ def _auto_scales(N: int, fs: float, nv: int = 32) -> np.ndarray:
 
 
 def _scales_to_freqs(scales: np.ndarray, w0: float = MORLET_W0) -> np.ndarray:
-    """f = w0 / (2π · a)  — scales in seconds, freqs in Hz."""
+    """f = w0 / (2pi * a)  — scales in seconds, freqs in Hz."""
     return w0 / (2.0 * math.pi * scales)
 
 
+def _get_wavelet_center(wavelet: str, wavelet_order: int | None) -> float:
+    """Return the effective center frequency (w0 equivalent) for the wavelet.
+
+    This value enters the scale-to-frequency formula: f_c = w0 / (2pi*a).
+    """
+    if wavelet in ("morlet", "bump"):
+        return MORLET_W0
+    elif wavelet == "paul":
+        m = wavelet_order if wavelet_order is not None else 4
+        return float(m)
+    elif wavelet == "dog":
+        m = wavelet_order if wavelet_order is not None else 2
+        return math.sqrt(float(m))
+    else:
+        raise ValueError(
+            f"Unsupported wavelet '{wavelet}'. Choose from: {_SUPPORTED_WAVELETS}"
+        )
+
+
 def _morlet_filter_bank(
-    omega: torch.Tensor,    # (N,) float rad/s, on device
-    scales: torch.Tensor,   # (n_chunk,) float, on device
+    omega: torch.Tensor,
+    scales: torch.Tensor,
     w0: float,
     real_dtype: torch.dtype,
 ) -> torch.Tensor:
-    """
-    Build 2D Morlet filter bank for a chunk of scales via broadcasting.
-
-    Returns psi_hat of shape (n_chunk, N), real dtype.
-    psi_hat[i,j] = PI^(-1/4) * exp(-0.5*(a_i*omega_j - w0)^2)  for a_i*omega_j > 0
-                 = 0                                              otherwise
-    """
-    scaled_omega = scales[:, None] * omega[None, :]          # (n_chunk, N)
+    """Morlet filter bank. Returns psi_hat (n_chunk, N) real."""
+    scaled_omega = scales[:, None] * omega[None, :]
     gaussian = _PI_NEG_QUARTER * torch.exp(
         -0.5 * (scaled_omega - w0) ** 2
     ).to(real_dtype)
@@ -56,50 +73,76 @@ def _morlet_filter_bank(
         gaussian,
         torch.zeros(1, dtype=real_dtype, device=omega.device),
     )
-    return psi_hat  # (n_chunk, N) real
+    return psi_hat
+
+
+def _get_filter_bank(
+    wavelet: str,
+    wavelet_order: int | None,
+    omega: torch.Tensor,
+    scales: torch.Tensor,
+    real_dtype: torch.dtype,
+) -> torch.Tensor:
+    """Dispatch to the correct filter bank. Returns psi_hat (n_scales, N) real."""
+    if wavelet == "morlet":
+        return _morlet_filter_bank(omega, scales, MORLET_W0, real_dtype)
+    elif wavelet == "bump":
+        from wavesst.transforms.wavelets import _bump_filter_bank
+        return _bump_filter_bank(omega, scales, MORLET_W0, real_dtype)
+    elif wavelet == "paul":
+        m = wavelet_order if wavelet_order is not None else 4
+        from wavesst.transforms.wavelets import _paul_filter_bank
+        return _paul_filter_bank(omega, scales, m, real_dtype)
+    elif wavelet == "dog":
+        m = wavelet_order if wavelet_order is not None else 2
+        from wavesst.transforms.wavelets import _dog_filter_bank
+        return _dog_filter_bank(omega, scales, m, real_dtype)
+    else:
+        raise ValueError(
+            f"Unsupported wavelet '{wavelet}'. Choose from: {_SUPPORTED_WAVELETS}"
+        )
 
 
 def cwt(
     x,
     *,
     wavelet: str = "morlet",
+    wavelet_order: int | None = None,
     scales="auto",
     fs: float = 1.0,
     nv: int = 32,
+    f_low: float | None = None,
+    f_high: float | None = None,
     cfg: Config | None = None,
 ) -> CWTResult:
     """
     Continuous Wavelet Transform via batched FFT (torch-native).
 
-    W_x(a, b) = IFFT[ X_hat(ω) · ψ̂*(a·ω) ]
+    W_x(a, b) = IFFT[ X_hat(omega) * psi_hat*(a*omega) ]
 
-    Uses full-spectrum fft/ifft (NOT rfft) so W is the complex analytic CWT.
-    The Morlet wavelet is analytic (ψ̂(ω)=0 for ω≤0), so the complex-valued
-    output contains the instantaneous amplitude and phase directly.
-
-    Large W matrix stages in CPU RAM as a torch CPU tensor; only one chunk
-    at a time occupies VRAM. Use cfg.resolve_chunk_scales(N) for sizing.
+    Supports wavelets: "morlet" (default), "bump", "paul", "dog".
+    Paul and DOG accept an optional wavelet_order (defaults: Paul=4, DOG=2).
+    Optional f_low/f_high (Hz) restrict computed scales to those whose
+    centre frequency falls within [f_low, f_high].
 
     Parameters
     ----------
-    x       : 1-D array-like or torch.Tensor, length N
-    wavelet : "morlet" (only supported in v1)
-    scales  : "auto" | int | np.ndarray  (scales in seconds)
-    fs      : sample rate in Hz
-    nv      : voices per octave (used when scales="auto")
-    cfg     : Config; defaults to wavesst.config module singleton
+    x            : 1-D array-like or torch.Tensor, length N
+    wavelet      : one of "morlet", "bump", "paul", "dog"
+    wavelet_order: order parameter for Paul/DOG (int or None)
+    scales       : "auto" | int | np.ndarray
+    fs           : sample rate in Hz
+    nv           : voices per octave (used when scales="auto")
+    f_low        : lower frequency limit in Hz (optional)
+    f_high       : upper frequency limit in Hz (optional)
+    cfg          : Config; defaults to wavesst.config module singleton
 
     Returns
     -------
-    CWTResult
-        W      — torch.Tensor, complex, (n_scales, N), on CPU
-        scales — np.ndarray float64, (n_scales,)
-        freqs  — np.ndarray float64, (n_scales,) Hz; f = w0/(2π·a)
-        times  — np.ndarray float64, (N,) seconds
-        cfg    — the Config used
+    CWTResult with wavelet and wavelet_order fields populated
     """
-    if wavelet != "morlet":
-        raise ValueError(f"Unsupported wavelet '{wavelet}'; only 'morlet' supported in v1")
+    # Validate wavelet early (raises ValueError if unknown)
+    w0 = _get_wavelet_center(wavelet, wavelet_order)
 
     if cfg is None:
         cfg = _global_config
@@ -107,7 +150,7 @@ def cwt(
     device = cfg.resolve_device()
     real_dtype = cfg.real_dtype
 
-    # --- Convert input to real tensor on device ---
+    # --- Convert input ---
     if isinstance(x, torch.Tensor):
         x_dev = x.to(device=device, dtype=real_dtype)
     else:
@@ -116,7 +159,7 @@ def cwt(
         x_dev = torch.from_numpy(arr).to(device)
     N = x_dev.shape[0]
 
-    # --- Build scale array (numpy, stays on CPU for Cython compatibility) ---
+    # --- Build scale array ---
     if isinstance(scales, str) and scales == "auto":
         scale_arr = _auto_scales(N, fs, nv)
     elif isinstance(scales, (int, np.integer)):
@@ -128,35 +171,49 @@ def cwt(
     else:
         raise ValueError(f"scales must be 'auto', int, or ndarray; got {type(scales)}")
 
+    # --- Apply f_low / f_high band-limiting ---
+    if f_low is not None or f_high is not None:
+        freqs_candidate = _scales_to_freqs(scale_arr, w0)
+        mask = np.ones(len(scale_arr), dtype=bool)
+        if f_low is not None:
+            mask &= freqs_candidate >= f_low
+        if f_high is not None:
+            mask &= freqs_candidate <= f_high
+        scale_arr = scale_arr[mask]
+        if len(scale_arr) == 0:
+            raise ValueError(
+                f"No scales remain after frequency band-limiting "
+                f"(f_low={f_low}, f_high={f_high})."
+            )
+
     n_scales = len(scale_arr)
     np_float = np.float32 if real_dtype == torch.float32 else np.float64
 
-    # --- Angular frequency axis on device (rad/s), full spectrum ---
     omega = torch.fft.fftfreq(N, d=1.0 / fs, device=device) * (2.0 * math.pi)
-
-    # --- Forward FFT of signal once ---
-    X_hat = torch.fft.fft(x_dev)   # (N,) complex
-
-    # --- Allocate W in CPU RAM (torch CPU tensor) ---
+    X_hat = torch.fft.fft(x_dev)
     W_cpu = torch.empty(n_scales, N, dtype=cfg.dtype, device='cpu')
-
-    # --- Chunked scale loop: each chunk processed on device, then offloaded ---
     chunk_size = cfg.resolve_chunk_scales(N)
     scales_dev = torch.from_numpy(scale_arr.astype(np_float)).to(device)
 
     for start in range(0, n_scales, chunk_size):
         end = min(start + chunk_size, n_scales)
-        scales_chunk = scales_dev[start:end]          # (chunk,)
-
-        psi_hat = _morlet_filter_bank(omega, scales_chunk, MORLET_W0, real_dtype)
-        # product shape: (chunk, N) complex
+        scales_chunk = scales_dev[start:end]
+        psi_hat = _get_filter_bank(wavelet, wavelet_order, omega, scales_chunk, real_dtype)
         product = X_hat[None, :] * psi_hat
-        W_chunk = torch.fft.ifft(product, dim=-1)     # (chunk, N) complex
-
-        # Offload to CPU RAM, cast to target complex dtype
+        W_chunk = torch.fft.ifft(product, dim=-1)
         W_cpu[start:end] = W_chunk.to(device='cpu', dtype=cfg.dtype)
 
-    freqs = _scales_to_freqs(scale_arr)
+    freqs = _scales_to_freqs(scale_arr, w0)
     times = np.arange(N, dtype=np.float64) / fs
 
-    return CWTResult(W=W_cpu, scales=scale_arr, freqs=freqs, times=times, cfg=cfg)
+    # Resolve defaults for wavelet_order
+    resolved_order: int | None = None
+    if wavelet == "paul":
+        resolved_order = wavelet_order if wavelet_order is not None else 4
+    elif wavelet == "dog":
+        resolved_order = wavelet_order if wavelet_order is not None else 2
+
+    return CWTResult(
+        W=W_cpu, scales=scale_arr, freqs=freqs, times=times, cfg=cfg,
+        wavelet=wavelet, wavelet_order=resolved_order,
+    )

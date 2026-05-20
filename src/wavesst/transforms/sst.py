@@ -8,7 +8,7 @@ import torch
 
 from wavesst.config import Config, config as _global_config
 from wavesst.transforms.cwt import (
-    cwt, CWTResult, MORLET_W0, _morlet_filter_bank,
+    cwt, CWTResult, MORLET_W0, _get_filter_bank,
 )
 
 
@@ -50,52 +50,59 @@ def sst(
     x,
     *,
     wavelet: str = "morlet",
+    wavelet_order: int | None = None,
     scales="auto",
     fs: float = 1.0,
     nv: int = 32,
     gamma="auto",
+    f_low: float | None = None,
+    f_high: float | None = None,
     cfg: Config | None = None,
 ) -> SSTResult:
     """
     CWT-based Synchrosqueezing Transform (torch-native).
 
-    IF estimator:  ω̂(a,b) = Re[ -i · (∂_b W_x) / W_x ]
-    Reassignment:  T_x(f,b) += W_x(a,b)·(log2/nv)  where round(ω̂/2π) == f bin
+    IF estimator:  omega_hat(a,b) = Re[ -i * (d_b W_x) / W_x ]
+    Reassignment:  T_x(f,b) += W_x(a,b)*da_ratio  where round(omega_hat/2pi) == f bin
 
-    Uses vectorised scatter_add_ (real+imag split) — no Python loop over time.
-    W streams from CPU RAM back to device in chunks; Tx accumulates on device.
+    Supports wavelets: "morlet" (default), "bump", "paul", "dog".
+    Optional f_low/f_high restrict the computed frequency band.
 
     Parameters
     ----------
-    x       : 1-D array-like or torch.Tensor, length N
-    wavelet : "morlet"
-    scales  : "auto" | int | np.ndarray
-    fs      : sample rate in Hz
-    nv      : voices per octave
-    gamma   : "auto" | "universal" | float | callable | None
-    cfg     : Config; defaults to wavesst.config module singleton
+    x            : 1-D array-like or torch.Tensor, length N
+    wavelet      : one of "morlet", "bump", "paul", "dog"
+    wavelet_order: order parameter for Paul/DOG wavelets
+    scales       : "auto" | int | np.ndarray
+    fs           : sample rate in Hz
+    nv           : voices per octave
+    gamma        : "auto" | "universal" | float | callable | None
+    f_low        : lower frequency limit in Hz (optional)
+    f_high       : upper frequency limit in Hz (optional)
+    cfg          : Config; defaults to wavesst.config module singleton
 
     Returns
     -------
     SSTResult — Tx is torch.Tensor on CPU
     """
-    if wavelet != "morlet":
-        raise ValueError(f"Unsupported wavelet '{wavelet}'")
-
     if cfg is None:
         cfg = _global_config
 
     device = cfg.resolve_device()
     real_dtype = cfg.real_dtype
 
-    # --- Step 1: CWT (W stages in CPU RAM) ---
-    wx = cwt(x, wavelet=wavelet, scales=scales, fs=fs, nv=nv, cfg=cfg)
-    scale_arr = wx.scales   # (n_scales,) float64 numpy
+    # --- Step 1: CWT ---
+    wx = cwt(
+        x, wavelet=wavelet, wavelet_order=wavelet_order,
+        scales=scales, fs=fs, nv=nv,
+        f_low=f_low, f_high=f_high, cfg=cfg,
+    )
+    scale_arr = wx.scales
     n_scales = len(scale_arr)
     N = wx.W.shape[1]
 
     # --- Step 2: Threshold ---
-    W_abs_cpu = wx.W.abs()   # (n_scales, N) real, CPU
+    W_abs_cpu = wx.W.abs()
     gamma_val = _compute_gamma(gamma, W_abs_cpu, N)
 
     # --- Step 3: Uniform frequency grid ---
@@ -106,11 +113,10 @@ def sst(
     freq_grid = np.linspace(f_min, f_max, n_freqs)
     df = float(freq_grid[1] - freq_grid[0])
 
-    # --- Step 4: Allocate Tx accumulators on device ---
+    # --- Step 4: Allocate Tx accumulators ---
     Tx_real = torch.zeros(n_freqs, N, dtype=real_dtype, device=device)
     Tx_imag = torch.zeros(n_freqs, N, dtype=real_dtype, device=device)
 
-    # Pre-compute on device: omega axis and X_hat (for derivative filter)
     omega = torch.fft.fftfreq(N, d=1.0 / fs, device=device) * (2.0 * math.pi)
 
     if isinstance(x, torch.Tensor):
@@ -118,37 +124,31 @@ def sst(
     else:
         np_float = np.float32 if real_dtype == torch.float32 else np.float64
         x_dev = torch.from_numpy(np.asarray(x, dtype=np_float)).to(device)
-    X_hat = torch.fft.fft(x_dev)   # (N,) complex
+    X_hat = torch.fft.fft(x_dev)
 
-    # Time index broadcast template
-    b_indices = torch.arange(N, device=device, dtype=torch.long)  # (N,)
+    b_indices = torch.arange(N, device=device, dtype=torch.long)
 
     # --- Step 5: Chunked reassignment ---
     chunk_size = cfg.resolve_chunk_scales(N)
     np_float = np.float32 if real_dtype == torch.float32 else np.float64
     scales_dev = torch.from_numpy(scale_arr.astype(np_float)).to(device)
+    da_ratio = float(math.log(scale_arr[1] / scale_arr[0]))
 
     for start in range(0, n_scales, chunk_size):
         end = min(start + chunk_size, n_scales)
         chunk = end - start
-        scales_chunk = scales_dev[start:end]      # (chunk,)
+        scales_chunk = scales_dev[start:end]
 
-        # Load W_chunk from CPU RAM onto device
-        W_chunk = wx.W[start:end].to(device=device, dtype=cfg.dtype)  # (chunk, N)
+        W_chunk = wx.W[start:end].to(device=device, dtype=cfg.dtype)
 
-        # Build derivative filter: i·ω·ψ̂(aω) = complex(0, ω·ψ̂)
-        psi_hat = _morlet_filter_bank(omega, scales_chunk, MORLET_W0, real_dtype)
+        # Derivative filter: i*omega*psi_hat(a*omega)
+        psi_hat = _get_filter_bank(wavelet, wx.wavelet_order, omega, scales_chunk, real_dtype)
         deriv_psi = torch.complex(
             torch.zeros_like(psi_hat),
             omega[None, :] * psi_hat,
-        )  # (chunk, N) complex
+        )
+        dW_chunk = torch.fft.ifft(X_hat[None, :] * deriv_psi, dim=-1)
 
-        # dW = IFFT[ X_hat · i·ω·ψ̂(aω) ]
-        dW_chunk = torch.fft.ifft(
-            X_hat[None, :] * deriv_psi, dim=-1
-        )  # (chunk, N) complex
-
-        # IF estimator: ω̂ = Re(-i · dW / W)
         W_abs_chunk = W_chunk.abs()
         mask_chunk = W_abs_chunk > gamma_val
         W_safe = torch.where(
@@ -156,30 +156,23 @@ def sst(
             W_chunk,
             torch.ones(1, dtype=cfg.dtype, device=device),
         )
-        omega_hat = torch.real(-1j * dW_chunk / W_safe)   # (chunk, N) real rad/s
+        omega_hat = torch.real(-1j * dW_chunk / W_safe)
 
-        # --- Vectorised scatter ---
-        f_hat = omega_hat / (2.0 * math.pi)               # (chunk, N) Hz
-        k = torch.round((f_hat - f_min) / df).long()      # (chunk, N) int64
-        valid = mask_chunk & (k >= 0) & (k < n_freqs)     # (chunk, N) bool
+        f_hat = omega_hat / (2.0 * math.pi)
+        k = torch.round((f_hat - f_min) / df).long()
+        valid = mask_chunk & (k >= 0) & (k < n_freqs)
 
-        da_ratio = float(math.log(scale_arr[1] / scale_arr[0]))  # = log(2)/nv
-        weights = W_chunk * da_ratio                       # (chunk, N) complex
+        weights = W_chunk * da_ratio
 
-        # Expand time indices and flatten valid entries
-        b_exp = b_indices.unsqueeze(0).expand(chunk, N)   # (chunk, N)
-        k_flat = k[valid]                                  # (M,)
-        b_flat = b_exp[valid]                              # (M,)
-        w_real = weights.real[valid]                       # (M,)
-        w_imag = weights.imag[valid]                       # (M,)
+        b_exp = b_indices.unsqueeze(0).expand(chunk, N)
+        k_flat = k[valid]
+        b_flat = b_exp[valid]
+        w_real = weights.real[valid]
+        w_imag = weights.imag[valid]
 
-        # Row-major linear index into flattened (n_freqs, N) Tx
-        lin_idx = k_flat * N + b_flat                      # (M,)
-
+        lin_idx = k_flat * N + b_flat
         Tx_real.view(-1).scatter_add_(0, lin_idx, w_real)
         Tx_imag.view(-1).scatter_add_(0, lin_idx, w_imag)
 
-    # Combine and move to CPU
     Tx = torch.complex(Tx_real, Tx_imag).cpu()
-
     return SSTResult(Tx=Tx, Wx=wx, freqs=freq_grid, times=wx.times)

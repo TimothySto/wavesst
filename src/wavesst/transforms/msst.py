@@ -66,7 +66,7 @@ def msst(
         cfg = _global_config
 
     # Pass 1: standard SST (W-derived IF) — unchanged
-    result = sst(x, wavelet=wavelet, scales=scales, fs=fs, nv=nv, gamma=gamma, cfg=cfg)
+    result = sst(x, wavelet=wavelet, wavelet_order=wavelet_order, scales=scales, fs=fs, nv=nv, gamma=gamma, cfg=cfg)
 
     if n_iter == 1:
         return MSSTResult(
