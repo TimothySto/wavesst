@@ -90,3 +90,19 @@ def test_stft_sst_reconstruct_amplitude(stft_sst_cfg):
         f"STFT-SST reconstruction amplitude factor = {error_factor:.3f} "
         f"(expected 1.00 ± 0.10)"
     )
+
+
+def test_plot_stft_sst_does_not_crash(tone, stft_sst_cfg):
+    """plot_sst and plot_ridges must not crash on STFTSSTResult (S2 regression test)."""
+    import matplotlib
+    matplotlib.use("Agg")   # non-interactive backend — safe in CI
+    from wavesst.viz.tf_plot import plot_sst, plot_ridges
+
+    result = stft_sst(tone, fs=FS, nperseg=256, gamma="auto", cfg=stft_sst_cfg)
+    ridges = wavesst.extract_ridges(result, n=1, penalty=1.0)
+
+    ax = plot_sst(result)
+    assert ax is not None
+
+    ax2 = plot_ridges(result, ridges)
+    assert ax2 is not None
