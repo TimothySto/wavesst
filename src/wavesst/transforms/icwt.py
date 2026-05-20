@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -12,23 +13,38 @@ if TYPE_CHECKING:
 from wavesst.transforms.cwt import MORLET_W0
 
 
+@lru_cache(maxsize=16)
 def _reconstruction_constant(wavelet: str, order: int | None, n_pts: int = 200_000) -> float:
     """
-    Compute the reconstruction constant K_psi for the L1-normalised CWT.
+    Compute the reconstruction constant K_ψ = (1/2) · ∫_0^∞ ψ̂(ω)/ω dω.
 
-    This CWT uses W(a,b) = IFFT[X_hat(omega) * psi_hat(a*omega)] (no sqrt(a) factor).
-    For a cosine input at frequency omega_0 the CWT satisfies:
-        Re[W(a,t)] = (1/2) * psi_hat(a*omega_0) * cos(omega_0*t)
-    and the discrete inversion sum satisfies:
-        (da_ratio) * sum_j Re[W(a_j,t)] -> (1/2) * cos(omega_0*t) * int_0^inf psi_hat(u)/u du
+    The CWT in this library uses the convention:
+        W(a,t) = IFFT[ X̂(ω) · ψ̂(aω) ]   (no √a normalisation)
 
-    Perfect reconstruction therefore requires:
-        K_psi = (1/2) * integral_0^inf psi_hat(omega) / omega domega
+    For a cosine input x(t) = cos(ω₀t):
+        Re[W(a,t)] ≈ (1/2) · ψ̂(aω₀) · cos(ω₀t)
 
-    This differs from the classical admissibility constant C_psi = int |psi_hat|^2/omega domega;
-    the two coincide only for wavelets where psi_hat is its own |.|^2 (up to scaling).
+    Summing over log-uniform scales:
+        Re[Σ_a W(a,t) · da/a] ≈ (1/2) · [∫_0^∞ ψ̂(u)/u du] · x(t)
 
-    n_pts: number of quadrature points on [1e-6, 100] for the numerical integral.
+    So perfect reconstruction uses:
+        x(t) = (da_ratio / K_ψ) · Re[W.sum(dim=0)]
+    where K_ψ = (1/2) · ∫ψ̂/ω dω — the factor 1/2 comes from the cosine
+    representation, not from any analytic-signal cancellation.
+
+    Parameters
+    ----------
+    wavelet : str
+        Wavelet name ('morlet', 'bump', 'paul', 'dog')
+    order : int | None
+        Wavelet order (used for 'paul' and 'dog'; ignored for 'morlet' and 'bump')
+    n_pts : int
+        Number of quadrature points on [1e-6, 100] for the numerical integral (default 200000)
+
+    Returns
+    -------
+    float
+        The reconstruction constant K_ψ
     """
     omega = np.linspace(1e-6, 100.0, n_pts)
     dw = omega[1] - omega[0]
@@ -67,14 +83,19 @@ def icwt(
     """
     Inverse CWT via the admissibility formula (log-scale version).
 
-    For geometrically-spaced scales a_j = a_0 * 2^(j/nv):
-        da_j / a_j = log(a[1]/a[0])  (constant)
+    For the CWT convention used here (no √a normalisation):
+        W(a,t) = IFFT[ X̂(ω) · ψ̂(aω) ]
 
-    The inversion formula simplifies to:
-        x(t) = (da_ratio / C_psi) * Re[ sum_j W(a_j, t) ]
+    The reconstruction formula is:
+        x(t) = (da_ratio / K_ψ) · Re[ Σ_j W(a_j, t) ]
 
-    (Factor is 1/C_psi not 2/C_psi because the wavelet is analytic — the
-    admissibility integral is one-sided, cancelling the usual factor of 2.)
+    where:
+        da_ratio = log(a[1]/a[0])  (constant for log-uniform scales)
+        K_ψ = (1/2) · ∫_0^∞ ψ̂(ω)/ω dω  (wavelet-specific reconstruction constant)
+
+    This is equivalent to the standard formula (2/C_ψ)·∫W·da/a with the
+    conventional C_ψ = ∫|ψ̂|²/ω dω only for wavelets where |ψ̂| = ψ̂
+    (i.e., real, positive filter banks as used here).
 
     Optional f_low / f_high zero out scales whose centre frequency falls
     outside [f_low, f_high] before summing — enables bandpass denoising.
@@ -111,9 +132,8 @@ def icwt(
     c_psi = _reconstruction_constant(result.wavelet, result.wavelet_order)
 
     # Sum over scales and take real part.
-    # Factor is 1/C_psi (not 2/C_psi) because this CWT is analytic (one-sided
-    # spectrum): the admissibility integral is already one-sided, matching the
-    # filter bank which has psi_hat(omega)=0 for omega<=0.
+    # The reconstruction constant K_ψ already accounts for the 1/2 factor
+    # from the cosine representation; see _reconstruction_constant() docstring.
     W_sum = W.sum(dim=0)                             # (N,) complex
     x_reconstructed = (da_ratio / c_psi) * torch.real(W_sum)
 
