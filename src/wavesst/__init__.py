@@ -5,6 +5,7 @@ from wavesst.transforms.sst import sst, SSTResult
 from wavesst.transforms.stft import stft, STFTResult
 from wavesst.transforms.stft_sst import stft_sst, STFTSSTResult
 from wavesst.transforms.msst import msst, MSSTResult
+from wavesst.transforms.icwt import icwt
 from wavesst.analysis.ridge import extract_ridges, Ridge
 from wavesst.analysis.reconstruction import reconstruct, Component
 from wavesst.viz.tf_plot import (
@@ -24,6 +25,7 @@ __all__ = [
     "stft", "STFTResult",
     "stft_sst", "STFTSSTResult",
     "msst", "MSSTResult",
+    "icwt",
     "extract_ridges", "Ridge",
     "reconstruct", "Component",
     "plot_cwt", "plot_sst", "plot_ridges", "plot_components",
