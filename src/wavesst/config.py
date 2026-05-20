@@ -5,6 +5,12 @@ from typing import Iterator
 import torch
 
 
+_DTYPE_MAP: dict[str, torch.dtype] = {
+    'complex64':  torch.complex64,
+    'complex128': torch.complex128,
+}
+
+
 @dataclass
 class Config:
     dtype: torch.dtype = torch.complex64
@@ -12,6 +18,15 @@ class Config:
     vram_budget_gb: float | None = None
     chunk_scales: int | None = None
     safety_factor: float = 0.75
+
+    def __post_init__(self):
+        if isinstance(self.dtype, str):
+            if self.dtype not in _DTYPE_MAP:
+                raise ValueError(
+                    f"Unknown dtype {self.dtype!r}. "
+                    f"Use one of: {list(_DTYPE_MAP)}"
+                )
+            self.dtype = _DTYPE_MAP[self.dtype]
 
     @property
     def real_dtype(self) -> torch.dtype:
