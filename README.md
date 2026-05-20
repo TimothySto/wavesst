@@ -22,15 +22,16 @@ STFT magnitude, STFT-SST, and CWT-SST component reconstruction.*
 
 ## Features
 
-| Transform | Class | Description |
-|-----------|-------|-------------|
-| CWT | `CWTResult` | Morlet wavelet, VRAM-aware chunked scale processing |
-| SST | `SSTResult` | Synchrosqueezed CWT via `scatter_add_` reassignment |
-| MSST | `MSSTResult` | Multi-synchrosqueezing (iterative, n_iter=1 ≡ SST) |
+| Transform | Result type | Description |
+|-----------|-------------|-------------|
+| CWT | `CWTResult` | 4 wavelet families (Morlet, Bump, Paul, DOG); VRAM-aware chunked scale processing; optional `f_low`/`f_high` band-limiting |
+| SST | `SSTResult` | Synchrosqueezed CWT via `scatter_add_` reassignment; all 4 wavelet families; `f_low`/`f_high` support |
+| MSST | `MSSTResult` | True Pham-Meignen multi-synchrosqueezing (Tx-derived IF for iterations 2+) |
+| Inverse CWT | — | `icwt()` — admissibility-formula reconstruction with optional bandpass denoising |
 | STFT | `STFTResult` | GPU-native windowed FFT |
-| STFT-SST | `STFTSSTResult` | STFT synchrosqueezing; exact IF via window-derivative |
+| STFT-SST | `STFTSSTResult` | STFT synchrosqueezing; exact IF via window-derivative (no finite-difference error) |
 | Ridge extraction | `Ridge` | Dynamic-programming ridge tracker (Cython) |
-| Reconstruction | `Component` | Inverse CWT-SST (admissibility) + STFT-SST (OLA) |
+| Reconstruction | `Component` | Inverse CWT-SST (admissibility) + STFT-SST (overlap-add) |
 
 ---
 
@@ -53,6 +54,27 @@ components = wavesst.reconstruct(sst_result, ridges)
 
 print(f"Ridge 1 median: {np.median(ridges[0].freq_path):.1f} Hz")
 print(f"Ridge 2 median: {np.median(ridges[1].freq_path):.1f} Hz")
+```
+
+### Alternative wavelet families
+
+```python
+# Bump wavelet — compact support in frequency domain
+cwt_bump = wavesst.cwt(x, fs=fs, nv=32, wavelet='bump', cfg=cfg)
+
+# Paul wavelet (order 4) — good time localisation
+cwt_paul = wavesst.cwt(x, fs=fs, nv=32, wavelet='paul', wavelet_order=4, cfg=cfg)
+
+# DOG (derivative of Gaussian, order 2) — symmetric, smooth
+cwt_dog  = wavesst.cwt(x, fs=fs, nv=32, wavelet='dog',  wavelet_order=2, cfg=cfg)
+```
+
+### Bandpass denoising with icwt
+
+```python
+# CWT of a noisy signal, then reconstruct only the band of interest
+cwt_result = wavesst.cwt(noisy, fs=fs, nv=32, cfg=cfg)
+x_clean    = wavesst.icwt(cwt_result, f_low=20.0, f_high=110.0)
 ```
 
 ### STFT-SST
@@ -101,15 +123,30 @@ pip install -e ".[cuda]"       # cupy for CUDA (torch CUDA included via torch)
 - Python ≥ 3.10
 - numpy ≥ 1.24, scipy ≥ 1.11
 - torch ≥ 2.1 (CPU or CUDA)
-- matplotlib ≥ 3.7
+- matplotlib ≥ 3.7, ipywidgets ≥ 8.0 (for interactive notebook plots)
 - A C compiler for Cython extensions (MSVC on Windows, GCC on Linux/macOS)
+
+---
+
+## Notebooks
+
+Four notebooks live in `notebooks/`, each runnable end-to-end:
+
+| Notebook | Contents |
+|----------|----------|
+| `00_wavesst_full_demo.ipynb` | Full pipeline: CWT → SST → MSST → STFT-SST → ridges → reconstruction → `icwt` bandpass denoising |
+| `01_cwt_sst.ipynb` | CWT deep dive: pure-tone energy profile, gamma threshold effect, voice density (`nv`), CWT vs SST vs MSST comparison |
+| `02_stft_stft_sst.ipynb` | STFT vs STFT-SST: window effects, Gini concentration comparison, ridge extraction, reconstruction |
+| `03_msst.ipynb` | MSST deep dive: SST vs MSST concentration (Gini), iteration effect (1–3 passes), true Pham-Meignen formulation |
+
+All plots are interactive (requires `ipywidgets ≥ 8.0`).
 
 ---
 
 ## Running tests
 
 ```bash
-# Full suite (108 tests)
+# Full suite (149 tests)
 pytest tests/ -q
 
 # Unit tests only
@@ -127,16 +164,19 @@ pytest tests/validation/ -v
 src/wavesst/
 ├── config.py                  # Config dataclass + module singleton
 ├── transforms/
-│   ├── cwt.py                 # CWT (chunked, GPU-native)
-│   ├── sst.py                 # SST (scatter_add_ reassignment)
+│   ├── cwt.py                 # CWT (chunked, GPU-native; Morlet/Bump/Paul/DOG; f_low/f_high)
+│   ├── sst.py                 # SST (scatter_add_ reassignment; all wavelet families)
+│   ├── msst.py                # Multi-synchrosqueezing (true Pham-Meignen, iterative)
 │   ├── stft.py                # STFT (GPU-native rfft framing)
 │   ├── stft_sst.py            # STFT-SST (window-derivative IF estimator)
-│   └── msst.py                # Multi-synchrosqueezing (iterative)
+│   ├── wavelets.py            # Bump, Paul, DOG filter banks (frequency domain)
+│   └── icwt.py                # Inverse CWT via admissibility formula
 ├── analysis/
 │   ├── ridge.py               # Dynamic-programming ridge extraction
 │   └── reconstruction.py      # Inverse transform → Component
 ├── viz/
-│   └── tf_plot.py             # plot_cwt, plot_sst, plot_ridges, plot_components
+│   ├── tf_plot.py             # Static plots: plot_cwt, plot_sst, plot_ridges, plot_components
+│   └── interactive.py         # ipywidgets wrappers: iplot_cwt, iplot_sst, iplot_ridges, …
 └── _core/
     ├── filters.pyx            # Cython: Morlet filter bank
     └── ridge_dp.pyx           # Cython: ridge DP solver
@@ -145,6 +185,8 @@ src/wavesst/
 ---
 
 ## Mathematical background
+
+### Synchrosqueezed CWT (SST)
 
 **Synchrosqueezing** (Daubechies & Maes 1996; Thakur & Wu 2011) sharpens a
 time-frequency representation by *reassigning* each coefficient to the
@@ -160,14 +202,45 @@ For the CWT-based SST the instantaneous frequency estimator is:
 and the reassigned representation is:
 
 ```
-T_x(f, t) = (log 2 / nv) · Σ_{a : |ω̂(a,t) - f| < Δf/2}  W_x(a, t)
+T_x(f, t) = (log 2 / nv) · Σ_{a : |ω̂(a,t) − f| < Δf/2}  W_x(a, t)
 ```
 
-Reconstruction uses the admissibility constant `C_ψ`:
+### Multi-Synchrosqueezing (MSST)
+
+The true Pham-Meignen (2017) formulation iterates the squeezing step.
+For passes k ≥ 2 the IF is re-estimated directly from the previous output T_x^{k−1}
+rather than from W, sharpening ridges progressively:
+
+```
+ω̂^k(ξ, t) = Re(-i · ∂_t T_x^{k-1}(ξ, t) / T_x^{k-1}(ξ, t))
+```
+
+where the time derivative is computed exactly via FFT:
+
+```
+∂_t T_x = IFFT[ iω · FFT[T_x] ]
+```
+
+### Inverse CWT (icwt)
+
+For this library's CWT convention (no √a normalisation), reconstruction uses:
+
+```
+x(t) = (da_ratio / K_ψ) · Re[ Σ_a W(a, t) ]
+
+K_ψ = (1/2) · ∫_0^∞ ψ̂(ω) / ω  dω
+```
+
+With optional `f_low`/`f_high`, scales outside the band are zeroed before
+summing — giving a simple but effective bandpass denoising path.
+
+### CWT-SST Reconstruction
 
 ```
 x_k(t) = (2 / C_ψ) · Re[ Σ_{f ∈ band_k(t)}  T_x(f, t) ]
 ```
+
+### STFT-SST
 
 For STFT-SST the IF is estimated from the window derivative:
 
@@ -198,12 +271,22 @@ to avoid Poisson-sum cancellation from the Hann window's leakage structure.
 
 ## Status
 
-This library was built session-by-session as an educational project exploring
-GPU-accelerated time-frequency analysis.  It is functional and tested but the
-API is not frozen — breaking changes may occur before v1.0.
+This library was built session-by-session as a focused project in GPU-accelerated
+time-frequency analysis.  It is functional, tested, and growing — but the API
+is not yet frozen and breaking changes may occur before v1.0.
 
-**Implemented:** CWT, SST, STFT, STFT-SST, MSST, ridge extraction,
-reconstruction, basic visualization.
+**Implemented:**
+- CWT, SST, STFT, STFT-SST, MSST (true Pham-Meignen), inverse CWT (`icwt`)
+- Morlet, Bump, Paul, DOG wavelet families
+- Frequency-band-limited scale selection (`f_low` / `f_high`)
+- Dynamic-programming ridge extraction and component reconstruction
+- Full `ipywidgets` interactive visualization layer
+- 4 tutorial notebooks covering the full transform pipeline
 
-**Planned:** Additional wavelets (Bump, Paul, DOG), true Pham-Meignen MSST,
-inverse CWT, adaptive bandwidth reconstruction, save/load utilities, Sphinx docs.
+**Planned (Session 8+):**
+- Signal synthesis toolkit (`make_chirp`, `make_amfm`, noise generators)
+- Component start/stop detection
+- Additional ridge extraction methods (probabilistic, penalised spline)
+- Large-scale characterisation framework with multiprocessing runner
+- Save/load utilities for transform results
+- Sphinx documentation
