@@ -1,19 +1,38 @@
+# Python bytecode
 __pycache__/
 *.py[cod]
 *.pyd
+
+# Cython / C build artefacts
 *.so
+*.c
+*.html
+*.annotate
+
+# Package / distribution
 *.egg-info/
 dist/
 build/
 .eggs/
-*.c
-*.html
-*.annotate
+
+# Test artefacts
 .pytest_cache/
 .hypothesis/
+.benchmarks/
+
+# Notebooks
 notebooks/.ipynb_checkpoints/
+
+# IDEs
 .vscode/
-docs/superpowers/
+.idea/
+
+# Personal / local tooling — never commit these
 .claude/
+docs/superpowers/
 ReferenceDocs/
 mempalace.yaml
+
+# Temporary / generated files
+diag_*.py
+env_out.txt
