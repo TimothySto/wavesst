@@ -7,6 +7,11 @@ import numpy as np
 import torch
 
 from wavesst.config import Config, config as _global_config
+from wavesst.transforms.wavelets import (
+    _bump_filter_bank,
+    _paul_filter_bank,
+    _dog_filter_bank,
+)
 
 MORLET_W0 = 6.0
 _PI_NEG_QUARTER = 0.7511255444649425  # pi^(-1/4)
@@ -47,9 +52,13 @@ def _get_wavelet_center(wavelet: str, wavelet_order: int | None) -> float:
         return MORLET_W0
     elif wavelet == "paul":
         m = wavelet_order if wavelet_order is not None else 4
+        if m < 1:
+            raise ValueError(f"wavelet_order for Paul wavelet must be >= 1, got {m}")
         return float(m)
     elif wavelet == "dog":
         m = wavelet_order if wavelet_order is not None else 2
+        if m < 1:
+            raise ValueError(f"wavelet_order for DOG wavelet must be >= 1, got {m}")
         return math.sqrt(float(m))
     else:
         raise ValueError(
@@ -87,15 +96,12 @@ def _get_filter_bank(
     if wavelet == "morlet":
         return _morlet_filter_bank(omega, scales, MORLET_W0, real_dtype)
     elif wavelet == "bump":
-        from wavesst.transforms.wavelets import _bump_filter_bank
         return _bump_filter_bank(omega, scales, MORLET_W0, real_dtype)
     elif wavelet == "paul":
         m = wavelet_order if wavelet_order is not None else 4
-        from wavesst.transforms.wavelets import _paul_filter_bank
         return _paul_filter_bank(omega, scales, m, real_dtype)
     elif wavelet == "dog":
         m = wavelet_order if wavelet_order is not None else 2
-        from wavesst.transforms.wavelets import _dog_filter_bank
         return _dog_filter_bank(omega, scales, m, real_dtype)
     else:
         raise ValueError(
@@ -183,7 +189,9 @@ def cwt(
         if len(scale_arr) == 0:
             raise ValueError(
                 f"No scales remain after frequency band-limiting "
-                f"(f_low={f_low}, f_high={f_high})."
+                f"(f_low={f_low}, f_high={f_high}). "
+                f"Available frequency range: "
+                f"[{freqs_candidate.min():.3g}, {freqs_candidate.max():.3g}] Hz."
             )
 
     n_scales = len(scale_arr)

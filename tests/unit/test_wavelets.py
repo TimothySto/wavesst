@@ -127,3 +127,28 @@ def test_sst_dog(tone, cfg):
 def test_cwt_unsupported_wavelet_raises(tone, cfg):
     with pytest.raises(ValueError, match="Unsupported wavelet"):
         cwt(tone, wavelet="haar", fs=FS, cfg=cfg)
+
+
+def test_cwt_paul_wavelet_order_zero_raises(tone, cfg):
+    """wavelet_order=0 for Paul should raise ValueError, not ZeroDivisionError."""
+    with pytest.raises(ValueError, match="wavelet_order"):
+        cwt(tone, wavelet="paul", wavelet_order=0, fs=FS, cfg=cfg)
+
+
+def test_cwt_dog_wavelet_order_zero_raises(tone, cfg):
+    """wavelet_order=0 for DOG should raise ValueError, not ZeroDivisionError."""
+    with pytest.raises(ValueError, match="wavelet_order"):
+        cwt(tone, wavelet="dog", wavelet_order=0, fs=FS, cfg=cfg)
+
+
+def test_cwt_f_high_too_low_raises_with_diagnostic(tone, cfg):
+    """f_high below all scales raises ValueError with range info."""
+    with pytest.raises(ValueError, match="No scales remain"):
+        cwt(tone, wavelet="morlet", fs=FS, f_high=0.001, cfg=cfg)
+
+
+def test_cwt_paul_f_low_f_high(tone, cfg):
+    """f_low/f_high filtering works for Paul wavelet too."""
+    result = cwt(tone, wavelet="paul", fs=FS, f_low=20.0, f_high=80.0, cfg=cfg)
+    assert result.freqs.min() >= 20.0 - 1e-6
+    assert result.freqs.max() <= 80.0 + 1e-6
