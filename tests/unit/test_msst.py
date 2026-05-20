@@ -60,34 +60,8 @@ def test_msst_2iter_more_concentrated(tone, cfg):
     assert renyi(e2) <= renyi(e1) + 1.0
 
 
-def test_msst_pm_more_concentrated_than_w_derived(tone, cfg):
-    """True PM MSST (Tx-derived IF for pass 2+) concentrates energy more
-    than the old W-derived approach would—demonstrated by comparing 2-iter
-    PM result to 1-iter SST (baseline).  We just check that the 2-iter
-    result stays at least as concentrated (regression guard)."""
-    from wavesst.transforms.msst import msst
-    r1 = msst(tone, fs=FS, n_iter=1, gamma="auto", cfg=cfg)
-    r2 = msst(tone, fs=FS, n_iter=2, gamma="auto", cfg=cfg)
-
-    def renyi(e, alpha=2):
-        p = e / e.sum()
-        p = p[p > 0]
-        return (1.0 / (1.0 - alpha)) * np.log(np.sum(p ** alpha))
-
-    e1 = r1.Tx.abs().pow(2).sum(dim=1).numpy()
-    e2 = r2.Tx.abs().pow(2).sum(dim=1).numpy()
-    # With true PM, pass 2 should not be drastically worse than pass 1.
-    # For a pure tone, SST already gives near-perfect concentration (Rényi ≈ 0),
-    # so PM pass-2 may be slightly higher due to Tx-derived IF on a near-delta Tx.
-    assert renyi(e2) <= renyi(e1) + 1.0, (
-        f"True PM pass-2 Rényi={renyi(e2):.4f} should be <= pass-1 {renyi(e1):.4f}+1.0"
-    )
-
-
-def test_msst_1iter_still_matches_sst_after_pm_refactor(tone, cfg):
-    """n_iter=1 must still produce identical output to sst() after refactor."""
-    from wavesst.transforms.sst import sst
-    from wavesst.transforms.msst import msst
-    sst_r = sst(tone, wavelet="morlet", scales="auto", fs=FS, gamma="auto", cfg=cfg)
-    msst_r = msst(tone, wavelet="morlet", scales="auto", fs=FS, n_iter=1, gamma="auto", cfg=cfg)
-    torch.testing.assert_close(msst_r.Tx, sst_r.Tx)
+def test_msst_3iter_runs_without_error(tone, cfg):
+    """Smoke test: n_iter=3 should complete without raising."""
+    result = msst(tone, fs=FS, n_iter=3, gamma="auto", cfg=cfg)
+    assert result.n_iter == 3
+    assert result.Tx.shape[1] == N

@@ -111,8 +111,8 @@ def msst(
 
         # Tx-derived IF field
         Tx_abs = Tx_dev.abs()
-        nonzero = Tx_abs[Tx_abs > 0]
-        gamma_tx = float(nonzero.median()) / 0.6745 if nonzero.numel() > 0 else 0.0
+        tx_abs_nz = Tx_abs[Tx_abs > 0]
+        gamma_tx = float(tx_abs_nz.median()) / 0.6745 if tx_abs_nz.numel() > 0 else 0.0
         Tx_safe = torch.where(
             Tx_abs > gamma_tx,
             Tx_dev,
@@ -123,6 +123,8 @@ def msst(
 
         Tx_new_real = torch.zeros(n_freqs, N, dtype=real_dtype, device=device)
         Tx_new_imag = torch.zeros(n_freqs, N, dtype=real_dtype, device=device)
+
+        da_ratio = float(math.log(scale_arr[1] / scale_arr[0]))
 
         for start in range(0, n_scales, chunk_size):
             end = min(start + chunk_size, n_scales)
@@ -137,7 +139,6 @@ def msst(
             k = torch.round((f_hat - f_min) / df).long()
             valid = mask_chunk & (k >= 0) & (k < n_freqs)
 
-            da_ratio = float(math.log(scale_arr[1] / scale_arr[0]))
             weights = W_chunk * da_ratio
 
             b_exp = b_indices.unsqueeze(0).expand(chunk, N)
