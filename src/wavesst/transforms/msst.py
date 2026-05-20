@@ -7,7 +7,7 @@ import numpy as np
 import torch
 
 from wavesst.config import Config, config as _global_config
-from wavesst.transforms.cwt import cwt, CWTResult, MORLET_W0, _morlet_filter_bank
+from wavesst.transforms.cwt import cwt, CWTResult
 from wavesst.transforms.sst import sst, SSTResult, _compute_gamma
 
 
@@ -29,30 +29,32 @@ def msst(
     nv: int = 32,
     n_iter: int = 2,
     gamma="auto",
+    wavelet_order: int | None = None,
     cfg: Config | None = None,
 ) -> MSSTResult:
     """
-    Multi-Synchrosqueezing Transform — iterative squeezing.
+    Multi-Synchrosqueezing Transform — Pham-Meignen (2017) iterative squeezing.
+
+    Pass 1: standard SST (W-derived IF).
+    Passes 2+: Tx-derived IF estimator (true Pham-Meignen algorithm):
+        dTx = IFFT[iω · FFT[Tx_{k-1}]]  along time axis
+        ω̂(ξ,t) = Re(-i · dTx / Tx)      where |Tx| > gamma_tx
+    For each scale a, the IF is looked up at the nearest freq-grid row ξ ≈ f_a,
+    and W(a,t) is scattered into the new Tx using that IF estimate.
 
     n_iter=1 is equivalent to standard SST (identical output).
-    For n_iter > 1, squeezing is applied n_iter times; each additional pass
-    uses a progressively tighter gamma derived from the previous Tx energy,
-    focusing energy onto the dominant ridges.
-
-    Note: uses the W-derived IF estimator at each pass (not the Tx-derived
-    estimator of Pham-Meignen 2017). A future session may add the full
-    Pham-Meignen formulation.
 
     Parameters
     ----------
-    x       : 1-D array-like or torch.Tensor, length N
-    wavelet : "morlet"
-    scales  : "auto" | int | np.ndarray
-    fs      : sample rate in Hz
-    nv      : voices per octave
-    n_iter  : number of squeezing passes (1 = standard SST)
-    gamma   : "auto" | "universal" | float | callable | None
-    cfg     : Config; defaults to wavesst.config module singleton
+    x            : 1-D array-like or torch.Tensor, length N
+    wavelet      : "morlet"
+    scales       : "auto" | int | np.ndarray
+    fs           : sample rate in Hz
+    nv           : voices per octave
+    n_iter       : number of squeezing passes (1 = standard SST)
+    gamma        : "auto" | "universal" | float | callable | None
+    wavelet_order: reserved for future use
+    cfg          : Config; defaults to wavesst.config module singleton
 
     Returns
     -------
@@ -63,7 +65,7 @@ def msst(
     if cfg is None:
         cfg = _global_config
 
-    # First pass: standard SST
+    # Pass 1: standard SST (W-derived IF) — unchanged
     result = sst(x, wavelet=wavelet, scales=scales, fs=fs, nv=nv, gamma=gamma, cfg=cfg)
 
     if n_iter == 1:
@@ -72,77 +74,80 @@ def msst(
             freqs=result.freqs, times=result.times, n_iter=1,
         )
 
-    # --- Additional passes use tighter gamma from previous Tx ---
+    # --- Passes 2+: true Pham-Meignen Tx-derived IF estimator ---
     device = cfg.resolve_device()
     real_dtype = cfg.real_dtype
     wx = result.Wx
-    scale_arr = wx.scales
+    scale_arr = wx.scales       # (n_scales,)
     n_scales = len(scale_arr)
     N = wx.W.shape[1]
-    freq_grid = result.freqs
+    freq_grid = result.freqs    # (n_freqs,) Hz, uniform, ascending
     f_min = float(freq_grid.min())
     n_freqs = len(freq_grid)
     df = float(freq_grid[1] - freq_grid[0])
 
+    # Angular-frequency axis for time-derivative
     omega = torch.fft.fftfreq(N, d=1.0 / fs, device=device) * (2.0 * math.pi)
+
     np_float = np.float32 if real_dtype == torch.float32 else np.float64
-    if isinstance(x, torch.Tensor):
-        x_dev = x.to(device=device, dtype=real_dtype)
-    else:
-        x_dev = torch.from_numpy(np.asarray(x, dtype=np_float)).to(device)
-    X_hat = torch.fft.fft(x_dev)
-    scales_dev = torch.from_numpy(scale_arr.astype(np_float)).to(device)
     b_indices = torch.arange(N, device=device, dtype=torch.long)
     chunk_size = cfg.resolve_chunk_scales(N)
 
-    Tx_prev = result.Tx   # CPU tensor
+    # Precompute nearest freq-grid row for each scale (outside the iteration loop)
+    scale_freqs = wx.freqs.astype(np_float)    # (n_scales,) Hz
+    freq_arr = freq_grid.astype(np_float)       # (n_freqs,) Hz
+    nearest_bin = np.argmin(
+        np.abs(freq_arr[None, :] - scale_freqs[:, None]), axis=1
+    )  # (n_scales,) int
+    nearest_bin_dev = torch.from_numpy(nearest_bin.astype(np.int64)).to(device)
+
+    Tx_prev = result.Tx   # CPU tensor, complex
 
     for _iteration in range(1, n_iter):
-        # Tighten gamma: MAD estimator on non-zero Tx entries
-        Tx_abs = Tx_prev.abs()
-        nonzero = Tx_abs[Tx_abs > 0]
-        gamma_val = float(nonzero.median()) / 0.6745 if nonzero.numel() > 0 else 0.0
+        # Compute time-derivative of Tx_{k-1} via FFT along time axis
+        Tx_dev = Tx_prev.to(device=device, dtype=cfg.dtype)   # (n_freqs, N)
+        Tx_hat = torch.fft.fft(Tx_dev, dim=-1)                # (n_freqs, N)
+        dTx = torch.fft.ifft(1j * omega[None, :] * Tx_hat, dim=-1)  # (n_freqs, N)
 
-        Tx_real = torch.zeros(n_freqs, N, dtype=real_dtype, device=device)
-        Tx_imag = torch.zeros(n_freqs, N, dtype=real_dtype, device=device)
+        # Tx-derived IF field
+        Tx_abs = Tx_dev.abs()
+        nonzero = Tx_abs[Tx_abs > 0]
+        gamma_tx = float(nonzero.median()) / 0.6745 if nonzero.numel() > 0 else 0.0
+        Tx_safe = torch.where(
+            Tx_abs > gamma_tx,
+            Tx_dev,
+            torch.ones(1, dtype=cfg.dtype, device=device),
+        )
+        omega_hat_tx = torch.real(-1j * dTx / Tx_safe)   # (n_freqs, N) rad/s
+        mask_tx = Tx_abs > gamma_tx                        # (n_freqs, N)
+
+        Tx_new_real = torch.zeros(n_freqs, N, dtype=real_dtype, device=device)
+        Tx_new_imag = torch.zeros(n_freqs, N, dtype=real_dtype, device=device)
 
         for start in range(0, n_scales, chunk_size):
             end = min(start + chunk_size, n_scales)
             chunk = end - start
-            scales_chunk = scales_dev[start:end]
 
             W_chunk = wx.W[start:end].to(device=device, dtype=cfg.dtype)
+            bins_chunk = nearest_bin_dev[start:end]        # (chunk,)
+            omega_hat_chunk = omega_hat_tx[bins_chunk, :]  # (chunk, N)
+            mask_chunk = mask_tx[bins_chunk, :]            # (chunk, N)
 
-            psi_hat = _morlet_filter_bank(omega, scales_chunk, MORLET_W0, real_dtype)
-            deriv_psi = torch.complex(
-                torch.zeros_like(psi_hat),
-                omega[None, :] * psi_hat,
-            )
-            dW_chunk = torch.fft.ifft(
-                X_hat[None, :] * deriv_psi, dim=-1
-            )
-
-            W_abs_chunk = W_chunk.abs()
-            mask_chunk = W_abs_chunk > gamma_val
-            W_safe = torch.where(
-                mask_chunk, W_chunk,
-                torch.ones(1, dtype=cfg.dtype, device=device),
-            )
-            omega_hat = torch.real(-1j * dW_chunk / W_safe)
-
-            f_hat = omega_hat / (2.0 * math.pi)
+            f_hat = omega_hat_chunk / (2.0 * math.pi)
             k = torch.round((f_hat - f_min) / df).long()
             valid = mask_chunk & (k >= 0) & (k < n_freqs)
+
             da_ratio = float(math.log(scale_arr[1] / scale_arr[0]))
             weights = W_chunk * da_ratio
+
             b_exp = b_indices.unsqueeze(0).expand(chunk, N)
             k_flat = k[valid]
             b_flat = b_exp[valid]
             lin_idx = k_flat * N + b_flat
-            Tx_real.view(-1).scatter_add_(0, lin_idx, weights.real[valid])
-            Tx_imag.view(-1).scatter_add_(0, lin_idx, weights.imag[valid])
+            Tx_new_real.view(-1).scatter_add_(0, lin_idx, weights.real[valid])
+            Tx_new_imag.view(-1).scatter_add_(0, lin_idx, weights.imag[valid])
 
-        Tx_prev = torch.complex(Tx_real, Tx_imag).cpu()
+        Tx_prev = torch.complex(Tx_new_real, Tx_new_imag).cpu()
 
     return MSSTResult(
         Tx=Tx_prev, Wx=wx,
