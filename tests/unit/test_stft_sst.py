@@ -92,6 +92,19 @@ def test_stft_sst_reconstruct_amplitude(stft_sst_cfg):
     )
 
 
+def test_extract_ridges_stft_sst_duck_type(tone, stft_sst_cfg):
+    """extract_ridges should accept STFTSSTResult via duck-typing (.Tx/.freqs/.times)."""
+    result = stft_sst(tone, fs=FS, nperseg=256, gamma="auto", cfg=stft_sst_cfg)
+    ridges = wavesst.extract_ridges(result, n=1, penalty=1.0)
+    assert isinstance(ridges, list)
+    assert len(ridges) == 1
+    r = ridges[0]
+    # Ridge.times must be a numpy array matching the STFT frame count
+    assert isinstance(r.times, np.ndarray)
+    assert r.times.shape == tuple(result.times.shape)
+    assert r.freq_path.shape == tuple(result.times.shape)
+
+
 def test_plot_stft_sst_does_not_crash(tone, stft_sst_cfg):
     """plot_sst and plot_ridges must not crash on STFTSSTResult (S2 regression test)."""
     import matplotlib
