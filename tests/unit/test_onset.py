@@ -70,3 +70,17 @@ def test_ridge_energy_path_sum_matches_total(cfg):
     ridges = extract_ridges(result, n=1, penalty=1.0)
     r = ridges[0]
     np.testing.assert_allclose(r.energy_path.sum(), r.energy, rtol=1e-10)
+
+
+def test_detect_onsets_zero_energy_returns_zero(cfg):
+    """Ridge with zero energy everywhere returns sentinel OnsetResult(0.0, 0.0)."""
+    t = np.arange(N) / FS
+    x = np.zeros(N, dtype=np.float32)
+    result = sst(x, fs=FS, nv=32, gamma='auto', cfg=cfg)
+    ridges = extract_ridges(result, n=1, penalty=1.0)
+    r = ridges[0]
+    # Manually zero out energy_path to test the guard branch
+    import dataclasses
+    r = dataclasses.replace(r, energy_path=np.zeros(N, dtype=np.float64))
+    onset = detect_onsets(r)
+    assert onset == OnsetResult(0.0, 0.0)
