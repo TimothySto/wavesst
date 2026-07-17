@@ -147,3 +147,61 @@ def test_make_amfm_fm_shifts_frequency():
 def test_make_amfm_t_start_zeros_prefix():
     x = make_amfm(duration=1.0, fs=FS, f_carrier=40.0, t_start=0.5)
     assert np.all(x[:int(0.5 * FS)] == 0.0)
+
+
+from wavesst.synthesis.noise import make_noise
+
+
+def test_make_noise_white_shape():
+    x = make_noise(duration=1.0, fs=FS, color='white')
+    assert x.shape == (256,)
+
+
+def test_make_noise_white_dtype():
+    x = make_noise(duration=1.0, fs=FS, color='white')
+    assert x.dtype == np.float32
+
+
+def test_make_noise_seeded_reproducible():
+    x1 = make_noise(duration=1.0, fs=FS, color='white', seed=0)
+    x2 = make_noise(duration=1.0, fs=FS, color='white', seed=0)
+    np.testing.assert_array_equal(x1, x2)
+
+
+def test_make_noise_different_seeds_differ():
+    x1 = make_noise(duration=1.0, fs=FS, color='white', seed=0)
+    x2 = make_noise(duration=1.0, fs=FS, color='white', seed=1)
+    assert not np.array_equal(x1, x2)
+
+
+def test_make_noise_pink_shape():
+    x = make_noise(duration=1.0, fs=FS, color='pink')
+    assert x.shape == (256,)
+
+
+def test_make_noise_brown_shape():
+    x = make_noise(duration=1.0, fs=FS, color='brown')
+    assert x.shape == (256,)
+
+
+def test_make_noise_impulsive_shape():
+    x = make_noise(duration=1.0, fs=FS, color='impulsive')
+    assert x.shape == (256,)
+
+
+def test_make_noise_impulsive_is_sparse():
+    """Impulsive noise should have mostly zero samples."""
+    x = make_noise(duration=10.0, fs=FS, color='impulsive', seed=0)
+    frac_nonzero = float(np.count_nonzero(x)) / len(x)
+    assert frac_nonzero < 0.5
+
+
+def test_make_noise_amplitude_scales_output():
+    x1 = make_noise(duration=1.0, fs=FS, color='white', amplitude=1.0, seed=0)
+    x2 = make_noise(duration=1.0, fs=FS, color='white', amplitude=2.0, seed=0)
+    np.testing.assert_allclose(x2, 2.0 * x1, rtol=1e-5)
+
+
+def test_make_noise_unknown_color_raises():
+    with pytest.raises(ValueError, match="color"):
+        make_noise(duration=1.0, fs=FS, color='ultraviolet')
