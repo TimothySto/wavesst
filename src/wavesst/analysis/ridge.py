@@ -8,10 +8,11 @@ from wavesst._core.ridge_dp import find_ridge
 
 @dataclass
 class Ridge:
-    freq_path: np.ndarray   # float64, shape (n_time,) -- Hz at each time step
-    bin_path: np.ndarray    # int32,   shape (n_time,) -- frequency bin index
-    energy: float           # total energy along this ridge
-    times: np.ndarray       # float64, shape (n_time,) -- time values in seconds
+    freq_path:   np.ndarray   # float64, shape (n_time,) -- Hz at each time step
+    bin_path:    np.ndarray   # int32,   shape (n_time,) -- frequency bin index
+    energy:      float        # total energy along the ridge
+    times:       np.ndarray   # float64, shape (n_time,) -- time values in seconds
+    energy_path: np.ndarray   # float64, shape (n_time,) -- energy at each time step
 
 
 def extract_ridges(
@@ -62,13 +63,15 @@ def extract_ridges(
     for _ in range(n):
         bin_path = find_ridge(residual, penalty)                          # (n_time,) int32
         freq_path = freqs[bin_path]                                       # (n_time,) Hz
-        ridge_energy = float(np.sum(energy[bin_path, np.arange(n_time)]))
+        energy_path = energy[bin_path, np.arange(n_time)]                # (n_time,) float64
+        ridge_energy = float(np.sum(energy_path))
 
         ridges.append(Ridge(
             freq_path=freq_path,
             bin_path=bin_path.astype(np.int32),
             energy=ridge_energy,
             times=times,
+            energy_path=energy_path,
         ))
 
         # Zero out this ridge in the residual so the next call finds a different path
