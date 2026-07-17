@@ -102,5 +102,61 @@ def make_amfm(
     t_start: float = 0.0,
     t_end: float | None = None,
 ) -> np.ndarray:
-    """Placeholder — implemented in Task 3."""
-    raise NotImplementedError("make_amfm implemented in Task 3")
+    """
+    Generate an AM/FM modulated signal.
+
+    Parameters
+    ----------
+    duration   : total signal duration in seconds
+    fs         : sample rate in Hz
+    f_carrier  : carrier frequency in Hz
+    am_func    : amplitude modulation; callable(t)->amplitude or ndarray of
+                 shape (N,); default is constant 1.0
+    fm_func    : frequency deviation from carrier; callable(t)->delta_f or
+                 ndarray of shape (N,); default is 0.0 (no FM)
+    t_start    : onset in seconds; samples before this are zero
+    t_end      : offset in seconds; samples after this are zero
+
+    Returns
+    -------
+    float32 ndarray of shape (N,) where N = int(duration * fs)
+    """
+    N = int(duration * fs)
+    t = np.arange(N, dtype=np.float64) / fs
+
+    if am_func is None:
+        am = np.ones(N, dtype=np.float64)
+    elif callable(am_func):
+        am = np.asarray(am_func(t), dtype=np.float64)
+        if am.ndim == 0:
+            am = np.full(N, am.item(), dtype=np.float64)
+        elif am.shape != (N,):
+            am = np.broadcast_to(am, (N,)).copy()
+    else:
+        am = np.broadcast_to(np.asarray(am_func, dtype=np.float64), (N,)).copy()
+
+    if fm_func is None:
+        f_total = np.full(N, f_carrier, dtype=np.float64)
+    elif callable(fm_func):
+        fm_result = np.asarray(fm_func(t), dtype=np.float64)
+        if fm_result.ndim == 0:
+            fm_result = np.full(N, fm_result.item(), dtype=np.float64)
+        elif fm_result.shape != (N,):
+            fm_result = np.broadcast_to(fm_result, (N,)).copy()
+        f_total = f_carrier + fm_result
+    else:
+        f_total = f_carrier + np.broadcast_to(
+            np.asarray(fm_func, dtype=np.float64), (N,)
+        ).copy()
+
+    phase = 2.0 * np.pi * np.cumsum(f_total) / fs
+    x = (am * np.cos(phase)).astype(np.float32)
+
+    i_start = int(t_start * fs)
+    i_end = N if t_end is None else min(int(t_end * fs), N)
+    if i_start > 0:
+        x[:i_start] = 0.0
+    if i_end < N:
+        x[i_end:] = 0.0
+
+    return x

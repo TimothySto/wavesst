@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 import wavesst
-from wavesst.synthesis.chirp import make_chirp
+from wavesst.synthesis.chirp import make_chirp, make_amfm
 
 FS = 256.0
 
@@ -99,3 +99,51 @@ def test_make_chirp_segments_piecewise_frequency():
 def test_make_chirp_missing_f_inst_raises():
     with pytest.raises(ValueError, match="f_inst"):
         make_chirp(duration=1.0, fs=FS, method='arbitrary')
+
+
+def test_make_amfm_shape():
+    x = make_amfm(duration=1.0, fs=FS, f_carrier=50.0)
+    assert x.shape == (256,)
+
+
+def test_make_amfm_dtype():
+    x = make_amfm(duration=1.0, fs=FS, f_carrier=50.0)
+    assert x.dtype == np.float32
+
+
+def test_make_amfm_no_modulation_is_pure_tone():
+    """No am/fm → pure cosine at f_carrier; FFT peak should be at f_carrier."""
+    x = make_amfm(duration=2.0, fs=FS, f_carrier=40.0)
+    fft = np.abs(np.fft.rfft(x))
+    freqs = np.fft.rfftfreq(len(x), d=1.0 / FS)
+    assert abs(freqs[np.argmax(fft)] - 40.0) < 2.0
+
+
+def test_make_amfm_am_callable_scales_amplitude():
+    """am_func returning 0.5 everywhere → max amplitude ≤ 0.6."""
+    x = make_amfm(duration=1.0, fs=FS, f_carrier=40.0, am_func=lambda t: 0.5)
+    assert np.max(np.abs(x)) < 0.6
+
+
+def test_make_amfm_am_array():
+    N = int(1.0 * FS)
+    am = np.full(N, 2.0)
+    x = make_amfm(duration=1.0, fs=FS, f_carrier=40.0, am_func=am)
+    assert x.shape == (N,)
+    assert np.max(np.abs(x)) < 2.1
+
+
+def test_make_amfm_fm_shifts_frequency():
+    """Positive constant fm_func → carrier shifts upward."""
+    x_base = make_amfm(duration=2.0, fs=FS, f_carrier=40.0)
+    x_fm   = make_amfm(duration=2.0, fs=FS, f_carrier=40.0,
+                        fm_func=lambda t: 20.0)
+    fft_base = np.abs(np.fft.rfft(x_base))
+    fft_fm   = np.abs(np.fft.rfft(x_fm))
+    freqs = np.fft.rfftfreq(len(x_base), d=1.0 / FS)
+    assert freqs[np.argmax(fft_fm)] > freqs[np.argmax(fft_base)]
+
+
+def test_make_amfm_t_start_zeros_prefix():
+    x = make_amfm(duration=1.0, fs=FS, f_carrier=40.0, t_start=0.5)
+    assert np.all(x[:int(0.5 * FS)] == 0.0)
