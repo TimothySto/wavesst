@@ -30,8 +30,12 @@ STFT magnitude, STFT-SST, and CWT-SST component reconstruction.*
 | Inverse CWT | — | `icwt()` — admissibility-formula reconstruction with optional bandpass denoising |
 | STFT | `STFTResult` | GPU-native windowed FFT |
 | STFT-SST | `STFTSSTResult` | STFT synchrosqueezing; exact IF via window-derivative (no finite-difference error) |
-| Ridge extraction | `Ridge` | Dynamic-programming ridge tracker (Cython) |
+| Ridge extraction | `Ridge` | Dynamic-programming ridge tracker (Cython); energy_path per timestep |
 | Reconstruction | `Component` | Inverse CWT-SST (admissibility) + STFT-SST (overlap-add) |
+| Signal synthesis | — | `make_chirp`, `make_amfm`, `make_noise` — linear/quadratic/arbitrary-IF chirps, AM/FM signals, white/pink/brown/impulsive noise |
+| Onset detection | `OnsetResult` | `detect_onsets()` — ridge energy thresholding for component start/stop |
+| Masked ridge extraction | `Ridge` | `extract_ridges_masked()` — frequency-band constrained ridge DP |
+| Parallel ridge extraction | `list[Ridge]` | `extract_ridges_parallel()` — band-decomposed concurrent extraction |
 
 ---
 
@@ -130,14 +134,16 @@ pip install -e ".[cuda]"       # cupy for CUDA (torch CUDA included via torch)
 
 ## Notebooks
 
-Four notebooks live in `notebooks/`, each runnable end-to-end:
+Six notebooks live in `notebooks/`, each runnable end-to-end:
 
 | Notebook | Contents |
 |----------|----------|
-| `00_wavesst_full_demo.ipynb` | Full pipeline: CWT → SST → MSST → STFT-SST → ridges → reconstruction → `icwt` bandpass denoising |
+| `00_wavesst_full_demo.ipynb` | Full pipeline: signal synthesis → CWT → SST → MSST → STFT-SST → ridges → reconstruction → `icwt` bandpass denoising |
 | `01_cwt_sst.ipynb` | CWT deep dive: pure-tone energy profile, gamma threshold effect, voice density (`nv`), CWT vs SST vs MSST comparison |
 | `02_stft_stft_sst.ipynb` | STFT vs STFT-SST: window effects, Gini concentration comparison, ridge extraction, reconstruction |
 | `03_msst.ipynb` | MSST deep dive: SST vs MSST concentration (Gini), iteration effect (1–3 passes), true Pham-Meignen formulation |
+| `04_signal_synthesis.ipynb` | Signal synthesis: linear/quadratic/arbitrary-IF chirps, gated signals, noise colours (white/pink/brown/impulsive), SST analysis of noisy signals |
+| `05_ridge_reconstruction.ipynb` | Ridge extraction methods: standard, masked, parallel; onset detection; reconstruction fidelity for multi-component signals |
 
 All plots are interactive (requires `ipywidgets ≥ 8.0`).
 
@@ -146,7 +152,7 @@ All plots are interactive (requires `ipywidgets ≥ 8.0`).
 ## Running tests
 
 ```bash
-# Full suite (149 tests)
+# Full suite (206 tests)
 pytest tests/ -q
 
 # Unit tests only
@@ -171,8 +177,13 @@ src/wavesst/
 │   ├── stft_sst.py            # STFT-SST (window-derivative IF estimator)
 │   ├── wavelets.py            # Bump, Paul, DOG filter banks (frequency domain)
 │   └── icwt.py                # Inverse CWT via admissibility formula
+├── synthesis/
+│   ├── chirp.py               # make_chirp, make_amfm — chirp and AM/FM signal generators
+│   └── noise.py               # make_noise — white, pink, brown, impulsive noise
 ├── analysis/
-│   ├── ridge.py               # Dynamic-programming ridge extraction
+│   ├── ridge.py               # Ridge extraction: extract_ridges, extract_ridges_masked
+│   ├── onset.py               # detect_onsets — energy-threshold onset/offset detection
+│   ├── parallel.py            # extract_ridges_parallel — band-decomposed concurrent extraction
 │   └── reconstruction.py      # Inverse transform → Component
 ├── viz/
 │   ├── tf_plot.py             # Static plots: plot_cwt, plot_sst, plot_ridges, plot_components
@@ -280,13 +291,15 @@ is not yet frozen and breaking changes may occur before v1.0.
 - Morlet, Bump, Paul, DOG wavelet families
 - Frequency-band-limited scale selection (`f_low` / `f_high`)
 - Dynamic-programming ridge extraction and component reconstruction
+- Signal synthesis: `make_chirp` (linear/quadratic/arbitrary-IF/piecewise), `make_amfm`, `make_noise` (white/pink/brown/impulsive)
+- `detect_onsets()` — ridge energy thresholding for component start/stop detection
+- `extract_ridges_masked()` — frequency-band constrained ridge extraction
+- `extract_ridges_parallel()` — band-decomposed concurrent ridge extraction
 - Full `ipywidgets` interactive visualization layer
-- 4 tutorial notebooks covering the full transform pipeline
+- 6 tutorial notebooks covering the full transform + synthesis + analysis pipeline
 
-**Planned (Session 8+):**
-- Signal synthesis toolkit (`make_chirp`, `make_amfm`, noise generators)
-- Component start/stop detection
+**Planned (Session 9+):**
+- Large-scale characterisation framework with multiprocessing runner and SQLite/Parquet result database
 - Additional ridge extraction methods (probabilistic, penalised spline)
-- Large-scale characterisation framework with multiprocessing runner
 - Save/load utilities for transform results
 - Sphinx documentation
