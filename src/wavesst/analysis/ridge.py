@@ -79,3 +79,69 @@ def extract_ridges(
             residual[bin_path[t], t] = 0.0
 
     return ridges
+
+
+def extract_ridges_masked(
+    sst_result,
+    mask: np.ndarray,
+    n: int = 1,
+    penalty: float = 1.0,
+) -> list[Ridge]:
+    """
+    Extract n dominant ridges from sst_result, restricting the DP to unmasked bins.
+
+    Parameters
+    ----------
+    sst_result : any result type with .Tx/.W and .freqs/.times
+    mask       : bool array, shape (n_freqs, n_time) — True = allowed bin
+    n          : number of ridges to extract
+    penalty    : frequency-jump penalty for the DP
+
+    Raises
+    ------
+    ValueError  if mask shape does not match (n_freqs, n_time)
+    ValueError  if mask is all False
+    """
+    # --- Extract energy matrix (same logic as extract_ridges) ---
+    Tx = sst_result.Tx
+    if isinstance(Tx, torch.Tensor):
+        Tx = Tx.cpu()
+
+    energy = Tx.abs().double().numpy()   # (n_freqs, n_time)
+
+    freqs = sst_result.freqs
+    if isinstance(freqs, torch.Tensor):
+        freqs = freqs.cpu().numpy()
+
+    times = sst_result.times
+    if isinstance(times, torch.Tensor):
+        times = times.cpu().numpy()
+
+    # --- Validate mask ---
+    if mask.shape != energy.shape:
+        raise ValueError(
+            f"mask shape {mask.shape} does not match energy shape {energy.shape}"
+        )
+    if not np.any(mask):
+        raise ValueError("mask is all False — no bins available for ridge extraction")
+
+    n_freqs, n_time = energy.shape
+
+    ridges = []
+    residual = energy.copy()
+    for _ in range(n):
+        masked_energy = np.where(mask, residual, -1e300)
+        bin_path = find_ridge(masked_energy, penalty)
+        freq_path = freqs[bin_path]
+        energy_path = energy[bin_path, np.arange(n_time)]
+        ridge_energy = float(np.sum(energy_path))
+        ridges.append(Ridge(
+            freq_path=freq_path,
+            bin_path=bin_path.astype(np.int32),
+            energy=ridge_energy,
+            times=times,
+            energy_path=energy_path,
+        ))
+        residual[bin_path, np.arange(n_time)] = 0.0
+
+    return ridges
