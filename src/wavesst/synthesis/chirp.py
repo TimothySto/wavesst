@@ -29,7 +29,8 @@ def make_chirp(
     t_start   : onset in seconds; samples before this are zero (default: 0.0)
     t_end     : offset in seconds; samples after this are zero (default: duration)
     segments  : list of (frequency_hz, duration_s) for piecewise-constant IF;
-                overrides f_start/f_end/method/f_inst when provided
+                overrides f_start/f_end/method/f_inst when provided; any
+                samples past the end of the last segment are zero
 
     Returns
     -------

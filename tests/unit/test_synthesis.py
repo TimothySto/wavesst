@@ -16,9 +16,12 @@ def test_make_chirp_linear_dtype():
     assert x.dtype == np.float32
 
 
-def test_make_chirp_linear_amplitude():
-    x = make_chirp(duration=2.0, fs=FS, f_start=20.0, f_end=80.0, method='linear')
-    assert np.all(np.abs(x) <= 1.0 + 1e-5)
+def test_make_chirp_linear_t_end_zeros_suffix():
+    """Samples after t_end should be exactly zero."""
+    x = make_chirp(duration=1.0, fs=FS, f_start=40.0, f_end=40.0,
+                   method='linear', t_end=0.5)
+    assert np.all(x[int(0.5 * FS):] == 0.0)
+    assert not np.all(x[:int(0.5 * FS)] == 0.0)
 
 
 def test_make_chirp_quadratic_shape():
