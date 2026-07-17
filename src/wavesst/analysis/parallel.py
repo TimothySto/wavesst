@@ -64,6 +64,16 @@ def extract_ridges_parallel(
         times = times.cpu().numpy()
 
     n_freqs, n_time = energy.shape
+
+    if n >= n_freqs:
+        raise ValueError(
+            f"n ({n}) must be less than the number of frequency bins ({n_freqs}). "
+            f"Use n < {n_freqs}."
+        )
+
+    if n_jobs != -1 and n_jobs < 1:
+        raise ValueError(f"n_jobs must be -1 or >= 1, got {n_jobs}")
+
     workers = min(n, os.cpu_count() or 1) if n_jobs == -1 else n_jobs
 
     # --- Divide frequency axis into n equal sub-bands ---

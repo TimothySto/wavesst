@@ -39,11 +39,22 @@ def test_parallel_ridge_shapes(cfg):
 
 
 def test_parallel_sorted_ascending_frequency(cfg):
-    """Ridges sorted by ascending median frequency."""
+    """Ridges from parallel extraction are ordered by ascending median frequency."""
     result = _make_sst(40.0, cfg)
     ridges = extract_ridges_parallel(result, n=3, penalty=1.0)
-    medians = [np.median(r.freq_path) for r in ridges]
-    assert medians == sorted(medians)
+    medians = [float(np.median(r.freq_path)) for r in ridges]
+    # Verify sorted ascending and genuinely distinct (3 different bands)
+    assert medians == sorted(medians), f"Expected sorted medians, got {medians}"
+    # Verify bands are distinct (each ridge covers a different frequency region)
+    assert len(set(round(m) for m in medians)) == 3, \
+        f"Expected 3 distinct frequency regions, got {medians}"
+
+
+def test_parallel_n_ge_n_freqs_raises(cfg):
+    result = _make_sst(40.0, cfg)
+    n_freqs = len(result.freqs)
+    with pytest.raises(ValueError, match="frequency bins"):
+        extract_ridges_parallel(result, n=n_freqs, penalty=1.0)
 
 
 def test_parallel_n1_returns_one_ridge(cfg):
