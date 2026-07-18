@@ -48,7 +48,15 @@ def _get_wavelet_center(wavelet: str, wavelet_order: int | None) -> float:
 
     This value enters the scale-to-frequency formula: f_c = w0 / (2pi*a).
     """
-    if wavelet in ("morlet", "bump"):
+    if wavelet == "morlet":
+        if wavelet_order is not None:
+            if wavelet_order <= 0:
+                raise ValueError(
+                    f"wavelet_order (w0) for Morlet must be > 0, got {wavelet_order}"
+                )
+            return float(wavelet_order)
+        return MORLET_W0
+    elif wavelet == "bump":
         return MORLET_W0
     elif wavelet == "paul":
         m = wavelet_order if wavelet_order is not None else 4
@@ -94,7 +102,8 @@ def _get_filter_bank(
 ) -> torch.Tensor:
     """Dispatch to the correct filter bank. Returns psi_hat (n_scales, N) real."""
     if wavelet == "morlet":
-        return _morlet_filter_bank(omega, scales, MORLET_W0, real_dtype)
+        w0 = float(wavelet_order) if wavelet_order is not None else MORLET_W0
+        return _morlet_filter_bank(omega, scales, w0, real_dtype)
     elif wavelet == "bump":
         return _bump_filter_bank(omega, scales, MORLET_W0, real_dtype)
     elif wavelet == "paul":
@@ -127,7 +136,12 @@ def cwt(
     W_x(a, b) = IFFT[ X_hat(omega) * psi_hat*(a*omega) ]
 
     Supports wavelets: "morlet" (default), "bump", "paul", "dog".
-    Paul and DOG accept an optional wavelet_order (defaults: Paul=4, DOG=2).
+    For Morlet, wavelet_order sets the centre-frequency w0 (default 6).
+    Higher w0 → more oscillations under the Gaussian → better frequency
+    resolution, worse time resolution (higher Q-factor).  Typical values:
+    6 (standard), 12 (balanced), 32 (high frequency-selectivity / CRES).
+    Paul and DOG accept wavelet_order as their polynomial order (defaults:
+    Paul=4, DOG=2).
     Optional f_low/f_high (Hz) restrict computed scales to those whose
     centre frequency falls within [f_low, f_high].
 
@@ -135,7 +149,8 @@ def cwt(
     ----------
     x            : 1-D array-like or torch.Tensor, length N
     wavelet      : one of "morlet", "bump", "paul", "dog"
-    wavelet_order: order parameter for Paul/DOG (int or None)
+    wavelet_order: Morlet: w0 centre-frequency (default 6); Paul: order
+                   (default 4); DOG: derivative order (default 2)
     scales       : "auto" | int | np.ndarray
     fs           : sample rate in Hz
     nv           : voices per octave (used when scales="auto")
@@ -214,9 +229,11 @@ def cwt(
     freqs = _scales_to_freqs(scale_arr, w0)
     times = np.arange(N, dtype=np.float64) / fs
 
-    # Resolve defaults for wavelet_order
+    # Resolve defaults for wavelet_order (stored so SST can retrieve w0 via wx.wavelet_order)
     resolved_order: int | None = None
-    if wavelet == "paul":
+    if wavelet == "morlet":
+        resolved_order = wavelet_order if wavelet_order is not None else int(MORLET_W0)
+    elif wavelet == "paul":
         resolved_order = wavelet_order if wavelet_order is not None else 4
     elif wavelet == "dog":
         resolved_order = wavelet_order if wavelet_order is not None else 2
