@@ -10,7 +10,7 @@ from wavesst.synthesis.chirp import make_chirp, make_amfm
 from wavesst.synthesis.noise import make_noise
 from wavesst.analysis.ridge import extract_ridges, extract_ridges_masked, Ridge
 from wavesst.analysis.reconstruction import reconstruct, Component
-from wavesst.analysis.onset import detect_onsets, OnsetResult
+from wavesst.analysis.onset import detect_onsets, detect_onset_segments, OnsetResult
 from wavesst.analysis.parallel import extract_ridges_parallel
 from wavesst.viz.tf_plot import (
     plot_cwt,
@@ -33,7 +33,7 @@ __all__ = [
     "make_chirp", "make_amfm", "make_noise",
     "extract_ridges", "extract_ridges_masked", "Ridge",
     "reconstruct", "Component",
-    "detect_onsets", "OnsetResult",
+    "detect_onsets", "detect_onset_segments", "OnsetResult",
     "extract_ridges_parallel",
     "plot_cwt", "plot_sst", "plot_ridges", "plot_components",
     "plot_stft", "plot_stft_sst",
