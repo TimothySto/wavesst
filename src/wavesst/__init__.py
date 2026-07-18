@@ -12,6 +12,7 @@ from wavesst.analysis.ridge import extract_ridges, extract_ridges_masked, Ridge
 from wavesst.analysis.reconstruction import reconstruct, Component
 from wavesst.analysis.onset import detect_onsets, detect_onset_segments, OnsetResult
 from wavesst.analysis.parallel import extract_ridges_parallel
+from wavesst.analysis.ridge_fit import fit_ridge, fit_ridge_segments, RidgeFit, SegmentFit
 from wavesst.viz.tf_plot import (
     plot_cwt,
     plot_sst,
@@ -35,6 +36,7 @@ __all__ = [
     "reconstruct", "Component",
     "detect_onsets", "detect_onset_segments", "OnsetResult",
     "extract_ridges_parallel",
+    "fit_ridge", "fit_ridge_segments", "RidgeFit", "SegmentFit",
     "plot_cwt", "plot_sst", "plot_ridges", "plot_components",
     "plot_stft", "plot_stft_sst",
 ]
