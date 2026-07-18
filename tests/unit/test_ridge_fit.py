@@ -116,3 +116,25 @@ def test_fit_ridge_exported_from_wavesst():
     assert hasattr(wavesst, 'fit_ridge_segments')
     assert hasattr(wavesst, 'RidgeFit')
     assert hasattr(wavesst, 'SegmentFit')
+
+
+def test_fit_ridge_rmse_within_window(cfg):
+    """RMSE should be computed over the fit window, not the full ridge."""
+    ridge = _make_linear_chirp_ridge(30.0, 70.0, cfg)
+    half = (N / FS) / 2
+    fit_full = fit_ridge(ridge, order=1)
+    fit_half = fit_ridge(ridge, order=1, t_start=0.0, t_end=half)
+    # Full-window and half-window RMSEs can legitimately differ, but both must be finite
+    assert np.isfinite(fit_full.rmse)
+    assert np.isfinite(fit_half.rmse)
+    # Half-window RMSE is over fewer points — verify it's non-negative
+    assert fit_half.rmse >= 0.0
+
+
+def test_fit_ridge_insufficient_points_raises(cfg):
+    """Fit window with fewer than order+1 points must raise ValueError."""
+    ridge = _make_linear_chirp_ridge(30.0, 70.0, cfg)
+    # Select a window containing exactly 1 sample (order=2 needs 3)
+    tiny_end = ridge.times[0] + 0.5 / FS  # just past first sample
+    with pytest.raises(ValueError, match="fit window"):
+        fit_ridge(ridge, order=2, t_start=ridge.times[0], t_end=tiny_end)

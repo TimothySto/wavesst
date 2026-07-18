@@ -14,7 +14,7 @@ class RidgeFit:
     coeffs:      np.ndarray   # shape (order+1,), highest-power-first (np.polyfit convention)
     fitted_freq: np.ndarray   # Hz at each time step along the full ridge, shape (n_time,)
     residuals:   np.ndarray   # freq_path − fitted_freq, shape (n_time,)
-    rmse:        float        # RMS of residuals in Hz
+    rmse:        float        # RMS of residuals within the fitting window (t_start to t_end)
 
 
 @dataclass
@@ -58,12 +58,18 @@ def fit_ridge(
     fit_times = times[mask]
     fit_freqs = freq_path[mask]
 
+    if len(fit_times) < order + 1:
+        raise ValueError(
+            f"fit window contains {len(fit_times)} sample(s) but "
+            f"order={order} requires at least {order + 1}"
+        )
+
     coeffs = np.polyfit(fit_times, fit_freqs, deg=order)
 
     # Evaluate over the FULL ridge time axis
     fitted_freq = np.polyval(coeffs, times)
     residuals = freq_path - fitted_freq
-    rmse = float(np.sqrt(np.mean(residuals ** 2)))
+    rmse = float(np.sqrt(np.mean(residuals[mask] ** 2)))
 
     return RidgeFit(
         order=order,
