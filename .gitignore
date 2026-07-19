@@ -38,16 +38,13 @@ diag_*.py
 env_out.txt
 
 # ── Internal / not for public release ─────────────────────────────────────────
-# Demo presentation notebook and its generator (interview-specific)
+# Demo presentation notebook 
 notebooks/06_demo_presentation.ipynb
 scripts/generate_demo_notebook.py
 
 # Generated figure outputs
 notebooks/demo_figures/
 
-# Demo scripts and assets
-demo_chirps.py
-demo_chirps.png
 
 # Project roadmap (internal planning)
 ROADMAP.md
